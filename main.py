@@ -299,96 +299,54 @@ def get_price_changes_for_interval(api_client, product_id, start_date, end_date,
     
     return price_changes
 
-# Fetch data for the entire year and find the best cyclical intervals for 100x leverage trading
-# start_date = datetime(2023, 7, 1)
-# end_date = datetime(2024, 7, 1)
-
-# Fetch data for month of July 2024 and find the best cyclical intervals for 100x leverage trading
-# product_id = "SOL-USD"
-# start_date = datetime(2024, 7, 1)
-# end_date = datetime(2024, 7, 31)
-# find_cyclical_patterns(client, product_id, start_date, end_date)
-
-def fetch_sample_data(api_client, product_id, start, end, granularity="FIFTEEN_MINUTE"):
+def get_price_change_last_24_hours(api_client, product_id, interval_time, granularity="FIFTEEN_MINUTE"):
     try:
-        response = api_client.get_candles(
-            product_id=product_id,
-            start=start,
-            end=end,
-            granularity=granularity
-        )
-        return response['candles']
-    except requests.exceptions.HTTPError as e:
-        print(f"Error fetching data: {e}")
+        end_time = datetime.strptime(interval_time, "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        print("Invalid datetime format for interval_time. Please use YYYY-MM-DD HH:MM:SS format.")
         return None
 
-# Fetch and print sample data to verify the timezone
-# start_date = datetime(2023, 7, 1)
-# end_date = datetime(2023, 7, 2)
-# start_timestamp = int(start_date.timestamp())
-# end_timestamp = int(end_date.timestamp())
+    start_time = end_time - timedelta(days=1)
 
-# sample_data = fetch_sample_data(client, product_id, start_timestamp, end_timestamp)
-# if sample_data:
-    # for candle in sample_data[:5]:  # Print first 5 data points
-        # timestamp = datetime.utcfromtimestamp(int(candle['start']))
-        # print(f"Timestamp: {timestamp}, Open: {candle['open']}, Close: {candle['close']}")
+    end_time_unix = int(end_time.timestamp())
+    start_time_unix = int(start_time.timestamp())
 
-# # Convert the best intervals to local time if needed
-import pytz
+    data = fetch_data(api_client, product_id, start_time_unix, end_time_unix, granularity)
+    if data:
+        open_price = float(data[-1]['open'])
+        close_price = float(data[0]['close'])
+        return ((close_price - open_price) / open_price) * 100
+    return 0
 
-def convert_to_local_time(utc_time, timezone="America/New_York"):
-    utc_time = datetime.strptime(utc_time, "%H:%M:%S").replace(tzinfo=pytz.utc)
-    local_time = utc_time.astimezone(pytz.timezone(timezone))
-    return local_time.strftime("%H:%M:%S")
+def get_price_change_since_beginning_of_day(api_client, product_id, interval_time, granularity="ONE_HOUR"):
+    try:
+        end_time = datetime.strptime(interval_time, "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        print("Invalid datetime format for interval_time. Please use YYYY-MM-DD HH:MM:SS format.")
+        return None
 
-# best_intervals = [
-    # "23:45:00", "04:45:00", "05:45:00", "23:30:00", "10:45:00",
-    # "07:45:00", "06:45:00", "06:00:00", "03:45:00", "08:45:00"
-# ]
+    start_of_day = datetime(end_time.year, end_time.month, end_time.day)  # Midnight of the specified day
 
-# Over entire year
-# best_intervals =["23:45:00",
-# "04:45:00",
-# "05:45:00",
-# "23:30:00",
-# "10:45:00",
-# "07:45:00",
-# "06:45:00",
-# "06:00:00",
-# "03:45:00",
-# "08:45:00"]
+    start_time_unix = int(start_of_day.timestamp())
+    end_time_unix = int(end_time.timestamp())
 
-# local_times = [convert_to_local_time(interval, "America/Denver") for interval in best_intervals]
-# ("Best Cyclical Intervals in Local Time:")
-# print(local_times)
+    data = fetch_data(api_client, product_id, start_time_unix, end_time_unix, granularity)
+    if data:
+        open_price = float(data[-1]['open'])
+        close_price = float(data[0]['close'])
+        return ((close_price - open_price) / open_price) * 100
+    return 0
 
-# 2024 July
-# best_intervals = [
-# "03:45:00",
-# "19:00:00",
-# "17:45:00",
-# "11:45:00",
-# "23:00:00",
-# "18:30:00",
-# "18:45:00",
-# "23:15:00",
-# "04:45:00",
-# "21:45:00"
-# ]
-# local_times = [convert_to_local_time(interval, "America/Denver") for interval in best_intervals]
-# ("Best Cyclical Intervals in Local Time:")
-# print(local_times)
-
-# Example usage:
 def main():
     parser = argparse.ArgumentParser(description='Crypto analysis tool.')
     parser.add_argument('--product_id', type=str, help='Product ID for the crypto asset')
     parser.add_argument('--find-cyclical-patterns', action='store_true', help='Find cyclical patterns for the given product ID')
     parser.add_argument('--price-changes-for-interval', action='store_true', help='Get price changes for a specific interval')
+    parser.add_argument('--previous-twenty-four-hours', action='store_true', help='Get the overall price change for the last 24 hours')
+    parser.add_argument('--since-beginning-of-day', action='store_true', help='Get the price change since the beginning of the specified day')
+    parser.add_argument('--interval_time', type=str, help='Interval time in YYYY-MM-DD HH:MM:SS format for the previous 24 hours and beginning of day calculations')
     parser.add_argument('--start_date', type=str, help='Start date in YYYY-MM-DD format')
     parser.add_argument('--end_date', type=str, help='End date in YYYY-MM-DD format')
-    parser.add_argument('--interval_time', type=str, help='Interval time in HH:MM:SS format')
 
     args = parser.parse_args()
 
@@ -398,12 +356,30 @@ def main():
         find_cyclical_patterns(client, args.product_id, start_date, end_date)
 
     if args.price_changes_for_interval:
-        interval_time = datetime.strptime(args.interval_time, "%H:%M:%S").time()
+        try:
+            interval_time = datetime.strptime(args.interval_time, "%H:%M:%S").time()
+        except ValueError:
+            print("Invalid time format for interval_time. Please use HH:MM:SS format.")
+            return
         start_date = datetime.strptime(args.start_date, "%Y-%m-%d")
         end_date = datetime.strptime(args.end_date, "%Y-%m-%d")
         price_changes = get_price_changes_for_interval(client, args.product_id, start_date, end_date, interval_time)
         print(price_changes)
 
+    if args.previous_twenty_four_hours:
+        price_change = get_price_change_last_24_hours(client, args.product_id, args.interval_time)
+        if price_change is not None:
+            print(f"Price change in the last 24 hours for {args.product_id} as of {args.interval_time}: {price_change}%")
+
+    if args.since_beginning_of_day:
+        if args.interval_time:
+            price_change = get_price_change_since_beginning_of_day(client, args.product_id, args.interval_time)
+            if price_change is not None:
+                print(f"Price change since the beginning of the day for {args.product_id} on {args.interval_time}: {price_change}%")
+        else:
+            print("Error: Date for --since-beginning-of-day not provided.")
+
 if __name__ == "__main__":
     main()
+
 
