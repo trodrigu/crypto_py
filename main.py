@@ -46,7 +46,7 @@ def analyze_intervals(df):
     }).reset_index()
     return grouped
 
-def find_cyclical_patterns(api_client, product_id, start_date, end_date):
+def find_cyclical_patterns(api_client, product_id, start_date, end_date, granularity="FIFTEEN_MINUTE"):
     current_date = start_date
     all_data = []
     request_count = 0
@@ -61,7 +61,7 @@ def find_cyclical_patterns(api_client, product_id, start_date, end_date):
         start_timestamp = int(current_date.timestamp())
         end_timestamp = int(next_date.timestamp())
         
-        data = fetch_data(api_client, product_id, start_timestamp, end_timestamp)
+        data = fetch_data(api_client, product_id, start_timestamp, end_timestamp, granularity)
         all_data.extend(data)
         request_count += 1
         
@@ -268,7 +268,7 @@ def discover_abc_pattern_with_volume_fibonacci(product_id, days_back=7, granular
     except Exception as e:
         return None
 
-def get_price_changes_for_interval(api_client, product_id, start_date, end_date, interval_time):
+def get_price_changes_for_interval(api_client, product_id, start_date, end_date, interval_time, granularity="FIFTEEN_MINUTE"):
     current_date = start_date
     all_data = []
     request_count = 0
@@ -283,7 +283,7 @@ def get_price_changes_for_interval(api_client, product_id, start_date, end_date,
         start_timestamp = int(current_date.timestamp())
         end_timestamp = int(next_date.timestamp())
         
-        data = fetch_data(api_client, product_id, start_timestamp, end_timestamp)
+        data = fetch_data(api_client, product_id, start_timestamp, end_timestamp, granularity)
         all_data.extend(data)
         request_count += 1
         
@@ -300,14 +300,21 @@ def get_price_changes_for_interval(api_client, product_id, start_date, end_date,
     return price_changes
 
 def get_price_change_last_24_hours(api_client, product_id, interval_time, granularity="FIFTEEN_MINUTE"):
-    try:
-        end_time = datetime.strptime(interval_time, "%Y-%m-%d %H:%M:%S")
-    except ValueError:
-        print("Invalid datetime format for interval_time. Please use YYYY-MM-DD HH:MM:SS format.")
+    if isinstance(interval_time, str):
+        try:
+            end_time = datetime.strptime(interval_time, "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            print("Invalid datetime format for interval_time. Please use YYYY-MM-DD HH:MM:SS format.")
+            return None
+    elif isinstance(interval_time, datetime):
+        end_time = interval_time
+    elif isinstance(interval_time, pd.Timestamp):
+        end_time = interval_time
+    else:
+        print("Unsupported type for interval_time. Please provide a string or Timestamp.")
         return None
 
     start_time = end_time - timedelta(days=1)
-
     end_time_unix = int(end_time.timestamp())
     start_time_unix = int(start_time.timestamp())
 
@@ -332,10 +339,66 @@ def get_price_change_since_beginning_of_day(api_client, product_id, interval_tim
 
     data = fetch_data(api_client, product_id, start_time_unix, end_time_unix, granularity)
     if data:
-        open_price = float(data[-1]['open'])
-        close_price = float(data[0]['close'])
+        open_price = float(data[0]['open'])
+        close_price = float(data[-1]['close'])
         return ((close_price - open_price) / open_price) * 100
     return 0
+
+def calculate_macd(data, slow=26, fast=12, signal=9):
+    exp1 = pd.Series(data).ewm(span=fast, adjust=False).mean()
+    exp2 = pd.Series(data).ewm(span=slow, adjust=False).mean()
+    macd = exp1 - exp2
+    signal_line = macd.ewm(span=signal, adjust=False).mean()
+    return macd, signal_line
+
+def calculate_rsi(data, period=14):
+    delta = np.diff(data)
+    gain = (delta > 0) * delta
+    loss = (delta < 0) * -delta
+
+    avg_gain = np.average(gain[:period])
+    avg_loss = np.average(loss[:period])
+
+    rs = avg_gain / avg_loss if avg_loss != 0 else 0  # Avoid division by zero
+    rsi = 100 - (100 / (1 + rs))
+    return rsi
+
+def calculate_correlation_interval_with_twenty_four(client, product_id, start_date, end_date, interval_time, granularity="FIFTEEN_MINUTE"):
+    data = get_price_changes_for_interval(client, product_id, start_date, end_date, interval_time, granularity)
+    print(data)
+    for index, row in data.iterrows():
+        row_time = row['start']  # Assuming 'start' is the column with the datetime information
+        data.at[index, 'price_change_since_twenty_four_hours'] = get_price_change_last_24_hours(client, product_id, row_time)
+    print(data)
+    # df['close'] = pd.to_numeric(df['close'], errors='coerce')
+
+    # df.dropna(subset=['close'], inplace=True)  # Drop rows where 'close' is NaN
+
+    # df['Price_Change'] = ((df['close'] - df['open']) / df['open']) * 100
+    # df['RSI'] = calculate_rsi(df['close'].tolist())
+    # df['MACD'], df['Signal_Line'] = calculate_macd(df['close'].tolist())
+
+    # correlation_with_rsi = df['Price_Change'].corr(df['RSI'])
+    # correlation_with_macd = df['Price_Change'].corr(df['MACD'])
+    # correlation_with_signal = df['Price_Change'].corr(df['Signal_Line'])
+    correlation_with_price_change_since_twenty_four_hours = data['price_change'].corr(data['price_change_since_twenty_four_hours'])
+    print(f"Correlation with price change since twenty four hours: {correlation_with_price_change_since_twenty_four_hours}")
+
+    # print(f"Correlation with RSI: {correlation_with_rsi}")
+    # print(f"Correlation with MACD: {correlation_with_macd}")
+    # print(f"Correlation with Signal Line: {correlation_with_signal}")
+def determine_granularity(start_time, end_time):
+    total_minutes = (end_time - start_time).total_seconds() / 60
+    if total_minutes <= 300:
+        return "ONE_MINUTE"
+    elif total_minutes <= 1500:
+        return "FIVE_MINUTES"
+    elif total_minutes <= 7200:
+        return "FIFTEEN_MINUTES"
+    elif total_minutes <= 14400:
+        return "THIRTY_MINUTES"
+    else:
+        return "ONE_DAY"
 
 def main():
     parser = argparse.ArgumentParser(description='Crypto analysis tool.')
@@ -344,16 +407,22 @@ def main():
     parser.add_argument('--price-changes-for-interval', action='store_true', help='Get price changes for a specific interval')
     parser.add_argument('--previous-twenty-four-hours', action='store_true', help='Get the overall price change for the last 24 hours')
     parser.add_argument('--since-beginning-of-day', action='store_true', help='Get the price change since the beginning of the specified day')
-    parser.add_argument('--interval_time', type=str, help='Interval time in YYYY-MM-DD HH:MM:SS format for the previous 24 hours and beginning of day calculations')
+    parser.add_argument('--rsi', action='store_true', help='Calculate RSI for the given product ID up to the specified interval')
+    parser.add_argument('--macd', action='store_true', help='Calculate MACD for the given product ID up to the specified interval')
+    parser.add_argument('--interval_time', type=str, help='Interval time in YYYY-MM-DD HH:MM:SS format for calculations')
     parser.add_argument('--start_date', type=str, help='Start date in YYYY-MM-DD format')
     parser.add_argument('--end_date', type=str, help='End date in YYYY-MM-DD format')
+    parser.add_argument('--calculate_correlation_interval_with_twenty_four', action='store_true', help='Calculate correlation between price changes and indicators')
+    parser.add_argument('--granularity', type=str, default='ONE_MINUTE', choices=['ONE_MINUTE', 'FIVE_MINUTE', 'FIFTEEN_MINUTE', 'ONE_HOUR', 'SIX_HOURS', 'ONE_DAY'],
+                        help='Granularity of the data to fetch. Default is ONE_MINUTE.')
+
 
     args = parser.parse_args()
 
     if args.find_cyclical_patterns:
         start_date = datetime.strptime(args.start_date, "%Y-%m-%d")
         end_date = datetime.strptime(args.end_date, "%Y-%m-%d")
-        find_cyclical_patterns(client, args.product_id, start_date, end_date)
+        find_cyclical_patterns(client, args.product_id, start_date, end_date, args.granularity)
 
     if args.price_changes_for_interval:
         try:
@@ -363,13 +432,14 @@ def main():
             return
         start_date = datetime.strptime(args.start_date, "%Y-%m-%d")
         end_date = datetime.strptime(args.end_date, "%Y-%m-%d")
-        price_changes = get_price_changes_for_interval(client, args.product_id, start_date, end_date, interval_time)
+        price_changes = get_price_changes_for_interval(client, args.product_id, start_date, end_date, interval_time, args.granularity)
         print(price_changes)
 
     if args.previous_twenty_four_hours:
-        price_change = get_price_change_last_24_hours(client, args.product_id, args.interval_time)
+        interval_time = args.interval_time if args.interval_time else datetime.now()
+        price_change = get_price_change_last_24_hours(client, args.product_id, interval_time)
         if price_change is not None:
-            print(f"Price change in the last 24 hours for {args.product_id} as of {args.interval_time}: {price_change}%")
+            print(f"Price change in the last 24 hours for {args.product_id} as of {interval_time}: {price_change}%")
 
     if args.since_beginning_of_day:
         if args.interval_time:
@@ -379,7 +449,46 @@ def main():
         else:
             print("Error: Date for --since-beginning-of-day not provided.")
 
+    if args.rsi or args.macd:
+        if not args.interval_time:
+            print("Error: Please specify --interval_time for RSI or MACD calculations.")
+            return
+
+        end_time = datetime.strptime(args.interval_time, "%Y-%m-%d %H:%M:%S")
+        start_time = end_time - timedelta(days=30)  # Assuming 30 days data is needed for calculation
+
+        # Determine appropriate granularity based on the time range
+        granularity = determine_granularity(start_time, end_time)
+
+        try:
+            data = fetch_data(client, args.product_id, int(start_time.timestamp()), int(end_time.timestamp()), granularity)
+            close_prices = [float(d['close']) for d in data]
+
+            if args.rsi:
+                rsi_value = calculate_rsi(close_prices)
+                print(f"RSI as of {args.interval_time}: {rsi_value}")
+
+            if args.macd:
+                macd_value, signal_line = calculate_macd(close_prices)
+                print(f"MACD as of {args.interval_time}: {macd_value}, Signal Line: {signal_line}")
+        except Exception as e:
+            print(f"Error fetching data: {e}")
+
+    if args.calculate_correlation_interval_with_twenty_four:
+        if not args.product_id or not args.interval_time:
+            print("Error: Please specify both --product_id and --interval_time for correlation calculations.")
+            return
+        try:
+            interval_time = datetime.strptime(args.interval_time, "%H:%M:%S").time()
+        except ValueError:
+            print("Invalid time format for interval_time. Please use HH:MM:SS format.")
+            return
+        start_date = datetime.strptime(args.start_date, "%Y-%m-%d")
+        end_date = datetime.strptime(args.end_date, "%Y-%m-%d")
+        calculate_correlation_interval_with_twenty_four(client, args.product_id, start_date, end_date, interval_time, args.granularity)
+
 if __name__ == "__main__":
     main()
+
 
 
