@@ -325,6 +325,31 @@ def get_price_change_last_24_hours(api_client, product_id, interval_time, granul
         return ((close_price - open_price) / open_price) * 100
     return 0
 
+def get_volume_change_last_24_hours(api_client, product_id, interval_time, granularity="FIFTEEN_MINUTE"):
+    if isinstance(interval_time, str):
+        try:
+            end_time = datetime.strptime(interval_time, "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            print("Invalid datetime format for interval_time. Please use YYYY-MM-DD HH:MM:SS format.")
+            return None
+    elif isinstance(interval_time, datetime):
+        end_time = interval_time
+    elif isinstance(interval_time, pd.Timestamp):
+        end_time = interval_time
+    else:
+        print("Unsupported type for interval_time. Please provide a string or Timestamp.")
+        return None
+
+    start_time = end_time - timedelta(days=1)
+    end_time_unix = int(end_time.timestamp())
+    start_time_unix = int(start_time.timestamp())
+
+    data = fetch_data(api_client, product_id, start_time_unix, end_time_unix, granularity)
+    if data:
+        volume_change = (float(data[0]['volume']) - float(data[-1]['volume'])) / float(data[-1]['volume'])
+        return volume_change
+    return 0
+
 def get_price_change_since_beginning_of_day(api_client, product_id, interval_time, granularity="ONE_HOUR"):
     try:
         end_time = datetime.strptime(interval_time, "%Y-%m-%d %H:%M:%S")
@@ -363,9 +388,18 @@ def calculate_rsi(data, period=14):
     rsi = 100 - (100 / (1 + rs))
     return rsi
 
+def calculate_correlation_interval_with_volume_twenty_four(client, product_id, start_date, end_date, interval_time, granularity="FIFTEEN_MINUTE"):
+    data = get_price_changes_for_interval(client, product_id, start_date, end_date, interval_time, granularity)
+    for index, row in data.iterrows():
+        row_time = row['start']  # Assuming 'start' is the column with the datetime information
+        data.at[index, 'volume_change_since_twenty_four_hours'] = get_volume_change_last_24_hours(client, product_id, row_time)
+    print(data)
+    correlation_with_volume_change_since_twenty_four_hours = data['volume_change_since_twenty_four_hours'].corr(data['volume_change_since_twenty_four_hours'])
+    print(f"Correlation with volume change since twenty four hours: {correlation_with_volume_change_since_twenty_four_hours}")
+
 def calculate_correlation_interval_with_twenty_four(client, product_id, start_date, end_date, interval_time, granularity="FIFTEEN_MINUTE"):
     data = get_price_changes_for_interval(client, product_id, start_date, end_date, interval_time, granularity)
-    print(data)
+    # print(data)
     for index, row in data.iterrows():
         row_time = row['start']  # Assuming 'start' is the column with the datetime information
         data.at[index, 'price_change_since_twenty_four_hours'] = get_price_change_last_24_hours(client, product_id, row_time)
@@ -413,6 +447,7 @@ def main():
     parser.add_argument('--start_date', type=str, help='Start date in YYYY-MM-DD format')
     parser.add_argument('--end_date', type=str, help='End date in YYYY-MM-DD format')
     parser.add_argument('--calculate_correlation_interval_with_twenty_four', action='store_true', help='Calculate correlation between price changes and indicators')
+    parser.add_argument('--calculate_correlation_interval_with_twenty_four_volume', action='store_true', help='Calculate correlation between price changes and indicators')
     parser.add_argument('--granularity', type=str, default='ONE_MINUTE', choices=['ONE_MINUTE', 'FIVE_MINUTE', 'FIFTEEN_MINUTE', 'ONE_HOUR', 'SIX_HOURS', 'ONE_DAY'],
                         help='Granularity of the data to fetch. Default is ONE_MINUTE.')
 
@@ -486,6 +521,19 @@ def main():
         start_date = datetime.strptime(args.start_date, "%Y-%m-%d")
         end_date = datetime.strptime(args.end_date, "%Y-%m-%d")
         calculate_correlation_interval_with_twenty_four(client, args.product_id, start_date, end_date, interval_time, args.granularity)
+
+    if args.calculate_correlation_interval_with_twenty_four_volume:
+        if not args.product_id or not args.interval_time:
+            print("Error: Please specify both --product_id and --interval_time for correlation calculations.")
+            return
+        try:
+            interval_time = datetime.strptime(args.interval_time, "%H:%M:%S").time()
+        except ValueError:
+            print("Invalid time format for interval_time. Please use HH:MM:SS format.")
+            return
+        start_date = datetime.strptime(args.start_date, "%Y-%m-%d")
+        end_date = datetime.strptime(args.end_date, "%Y-%m-%d")
+        calculate_correlation_interval_with_volume_twenty_four(client, args.product_id, start_date, end_date, interval_time, args.granularity)
 
 if __name__ == "__main__":
     main()
