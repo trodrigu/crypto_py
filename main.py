@@ -6,6 +6,7 @@ import pandas as pd
 import time
 import requests
 import argparse
+import talib
 
 # Initialize the client with your Coinbase API credentials
 client = RESTClient()
@@ -27,7 +28,7 @@ def fetch_data(api_client, product_id, start, end, granularity="FIFTEEN_MINUTE")
             else:
                 raise e
 
-def process_data(data):
+def process_data(data, product_id):
     df = pd.DataFrame(data, columns=["start", "low", "high", "open", "close", "volume"])
     df['start'] = pd.to_datetime(df['start'].astype(int), unit='s')
     df['low'] = df['low'].astype(float)
@@ -37,6 +38,7 @@ def process_data(data):
     df['volume'] = df['volume'].astype(float)
     df['price_change'] = df['close'] - df['open']
     df['volatility'] = df['high'] - df['low']
+    df = calculate_indicators(df, data, product_id)
     return df
 
 def analyze_intervals(df):
@@ -68,13 +70,18 @@ def find_cyclical_patterns(api_client, product_id, start_date, end_date, granula
         current_date = next_date
         time.sleep(0.2)  # Sleep for 200ms to ensure we stay within 5 requests per second
     
-    df = process_data(all_data)
+    df = process_data(all_data, product_id)
     analyzed_df = analyze_intervals(df)
     
     # Find the intervals with the least volatility on average
     best_intervals = analyzed_df.sort_values(by='volatility').head(10)
     print("Best Cyclical Intervals for 100x Leverage Trading:")
     print(best_intervals)
+    # Monitor significant volume changes and generate signals
+    signals = monitor_significant_volume_changes(df)
+    for signal in signals:
+        print(f"Date: {signal[0]}, Signal: {signal[1]}")
+
     return best_intervals
 
 def signal_buy_opportunity(product_id, days_back=7, granularity="ONE_DAY"):
@@ -290,7 +297,7 @@ def get_price_changes_for_interval(api_client, product_id, start_date, end_date,
         current_date = next_date
         time.sleep(0.2)  # Sleep for 200ms to ensure we stay within 5 requests per second
     
-    df = process_data(all_data)
+    df = process_data(all_data, product_id)
     df['interval_time'] = df['start'].dt.time
     
     # Filter data for the specified interval time
@@ -388,18 +395,79 @@ def calculate_rsi(data, period=14):
     rsi = 100 - (100 / (1 + rs))
     return rsi
 
+def monitor_significant_volume_changes(df, volume_threshold=0.05):
+    significant_volume_changes = df[df['Volume_Change'].pct_change() > volume_threshold]
+    signals = []
+    for index, row in significant_volume_changes.iterrows():
+        if row['Volume_Change'] > 0 and row['RSI'] > 50 and row['MACD'] > row['MACD_signal']:
+            signals.append((row['start'], 'Consider long position'))
+        elif row['Volume_Change'] < 0 and row['RSI'] < 50 and row['MACD'] < row['MACD_signal']:
+            signals.append((row['start'], 'Consider short position'))
+    return signals
+
 def calculate_correlation_interval_with_volume_twenty_four(client, product_id, start_date, end_date, interval_time, granularity="FIFTEEN_MINUTE"):
     data = get_price_changes_for_interval(client, product_id, start_date, end_date, interval_time, granularity)
     for index, row in data.iterrows():
         row_time = row['start']  # Assuming 'start' is the column with the datetime information
         data.at[index, 'volume_change_since_twenty_four_hours'] = get_volume_change_last_24_hours(client, product_id, row_time)
     print(data)
-    correlation_with_volume_change_since_twenty_four_hours = data['volume_change_since_twenty_four_hours'].corr(data['volume_change_since_twenty_four_hours'])
+    correlation_with_volume_change_since_twenty_four_hours = data['price_change'].corr(data['volume_change_since_twenty_four_hours'])
     print(f"Correlation with volume change since twenty four hours: {correlation_with_volume_change_since_twenty_four_hours}")
+
+def calculate_composite_score(df, product_id):
+    print("hi")
+    print(df)
+    df['Standardized_Volume_Change'] = (df['Volume_Change'] - df['Volume_Change'].mean()) / df['Volume_Change'].std()
+    df['Standardized_RSI'] = (df['RSI'] - df['RSI'].mean()) / df['RSI'].std()
+    df['Standardized_MACD'] = (df['MACD'] - df['MACD'].mean()) / df['MACD'].std()
+
+    for index, row in df.iterrows():
+        row_time = row['start']  # Assuming 'start' is the column with the datetime information
+        df.at[index, 'volume_change_since_twenty_four_hours'] = get_volume_change_last_24_hours(client, product_id, row_time)
+
+    df['Standardized_Volume_Change_Last_24'] = (df['volume_change_since_twenty_four_hours'] - df['volume_change_since_twenty_four_hours'].mean()) / df['volume_change_since_twenty_four_hours'].std()
+    
+    # Combine the standardized indicators into a composite score
+    df['Composite_Score'] = (df['Standardized_Volume_Change_Last_24'] + df['Standardized_RSI'] + df['Standardized_MACD']) / 3
+    return df
+
+def calculate_correlation_with_composite(api_client, product_id, start_date, end_date, interval_time, granularity="FIFTEEN_MINUTE"):
+    current_date = start_date
+    all_data = []
+    request_count = 0
+    
+    while current_date < end_date:
+        if request_count >= 10000:
+            print("Hourly request limit reached. Waiting for an hour before continuing...")
+            time.sleep(3600)  # Wait for an hour
+            request_count = 0
+        
+        next_date = current_date + timedelta(days=1)
+        start_timestamp = int(current_date.timestamp())
+        end_timestamp = int(next_date.timestamp())
+        
+        data = fetch_data(api_client, product_id, start_timestamp, end_timestamp, granularity)
+        all_data.extend(data)
+        request_count += 1
+        
+        current_date = next_date
+        time.sleep(0.2)  # Sleep for 200ms to ensure we stay within 5 requests per second
+    
+    df = process_data(all_data, product_id)
+    
+    # Calculate Composite Score
+    data = calculate_composite_score(df, product_id)
+    
+    # Calculate correlation
+    correlation_with_composite_score = data['price_change'].corr(data['Composite_Score'])
+    
+    print(f"Correlation with Composite Score: {correlation_with_composite_score}")
+    return correlation_with_composite_score
 
 def calculate_correlation_interval_with_twenty_four(client, product_id, start_date, end_date, interval_time, granularity="FIFTEEN_MINUTE"):
     data = get_price_changes_for_interval(client, product_id, start_date, end_date, interval_time, granularity)
-    # print(data)
+    print("data dude")
+    print(data)
     for index, row in data.iterrows():
         row_time = row['start']  # Assuming 'start' is the column with the datetime information
         data.at[index, 'price_change_since_twenty_four_hours'] = get_price_change_last_24_hours(client, product_id, row_time)
@@ -434,11 +502,26 @@ def determine_granularity(start_time, end_time):
     else:
         return "ONE_DAY"
 
+def calculate_indicators(df, raw_data, product_id):
+    print(df)
+    df['RSI'] = talib.RSI(df['close'], timeperiod=14)
+    df['MACD'], df['MACD_signal'], df['MACD_hist'] = talib.MACD(df['close'], fastperiod=12, slowperiod=26, signalperiod=9)
+    df['Price_Change'] = df['close'].diff()
+    df['Volume_Change'] = df['volume'].diff()
+    # df['Volume_Change_Since_Twenty_Four_Hours'] = (float(raw_data[0]['volume']) - float(raw_data[-1]['volume'])) / float(raw_data[-1]['volume'])
+
+    for index, row in df.iterrows():
+        row_time = row['start']  # Assuming 'start' is the column with the datetime information
+        df.at[index, 'volume_change_since_twenty_four_hours'] = get_volume_change_last_24_hours(client, product_id, row_time)
+    df.dropna(inplace=True)  # Drop NaN values that result from indicator calculations
+    return df
+
 def main():
     parser = argparse.ArgumentParser(description='Crypto analysis tool.')
     parser.add_argument('--product_id', type=str, help='Product ID for the crypto asset')
     parser.add_argument('--find-cyclical-patterns', action='store_true', help='Find cyclical patterns for the given product ID')
     parser.add_argument('--price-changes-for-interval', action='store_true', help='Get price changes for a specific interval')
+    parser.add_argument('--volume-changes-for-interval', action='store_true', help='Get volume changes for a specific interval')
     parser.add_argument('--previous-twenty-four-hours', action='store_true', help='Get the overall price change for the last 24 hours')
     parser.add_argument('--since-beginning-of-day', action='store_true', help='Get the price change since the beginning of the specified day')
     parser.add_argument('--rsi', action='store_true', help='Calculate RSI for the given product ID up to the specified interval')
@@ -448,6 +531,7 @@ def main():
     parser.add_argument('--end_date', type=str, help='End date in YYYY-MM-DD format')
     parser.add_argument('--calculate_correlation_interval_with_twenty_four', action='store_true', help='Calculate correlation between price changes and indicators')
     parser.add_argument('--calculate_correlation_interval_with_twenty_four_volume', action='store_true', help='Calculate correlation between price changes and indicators')
+    parser.add_argument('--calculate_correlation_interval_with_composite', action='store_true', help='Calculate correlation between price changes and indicators')
     parser.add_argument('--granularity', type=str, default='ONE_MINUTE', choices=['ONE_MINUTE', 'FIVE_MINUTE', 'FIFTEEN_MINUTE', 'ONE_HOUR', 'SIX_HOURS', 'ONE_DAY'],
                         help='Granularity of the data to fetch. Default is ONE_MINUTE.')
 
@@ -534,6 +618,25 @@ def main():
         start_date = datetime.strptime(args.start_date, "%Y-%m-%d")
         end_date = datetime.strptime(args.end_date, "%Y-%m-%d")
         calculate_correlation_interval_with_volume_twenty_four(client, args.product_id, start_date, end_date, interval_time, args.granularity)
+
+    if args.calculate_correlation_interval_with_composite:
+        if not args.product_id or not args.interval_time:
+            print("Error: Please specify both --product_id and --interval_time for correlation calculations.")
+            return
+        try:
+            interval_time = datetime.strptime(args.interval_time, "%H:%M:%S").time()
+        except ValueError:
+            print("Invalid time format for interval_time. Please use HH:MM:SS format.")
+            return
+        start_date = datetime.strptime(args.start_date, "%Y-%m-%d")
+        end_date = datetime.strptime(args.end_date, "%Y-%m-%d")
+        calculate_correlation_with_composite(client, args.product_id, start_date, end_date, interval_time, args.granularity)
+
+    if args.volume_changes_for_interval:
+        if not args.product_id or not args.interval_time:
+            print("Error: Please specify both --product_id and --interval_time for correlation calculations.")
+            return
+
 
 if __name__ == "__main__":
     main()
