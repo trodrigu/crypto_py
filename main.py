@@ -7,6 +7,7 @@ import time
 import requests
 import argparse
 import talib
+import sqlite3
 
 # Initialize the client with your Coinbase API credentials
 client = RESTClient()
@@ -516,6 +517,32 @@ def calculate_indicators(df, raw_data, product_id):
     df.dropna(inplace=True)  # Drop NaN values that result from indicator calculations
     return df
 
+def import_data_to_sqlite(data, db_name="crypto_data.db"):
+    conn = sqlite3.connect(db_name)
+    cursor = conn.cursor()
+    
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS candles (
+            start INTEGER,
+            low REAL,
+            high REAL,
+            open REAL,
+            close REAL,
+            volume REAL
+        )
+    ''')
+    
+    # Convert list of dictionaries to list of tuples
+    data_tuples = [(d['start'], d['low'], d['high'], d['open'], d['close'], d['volume']) for d in data]
+    
+    cursor.executemany('''
+        INSERT INTO candles (start, low, high, open, close, volume)
+        VALUES (?, ?, ?, ?, ?, ?)
+    ''', data_tuples)
+    
+    conn.commit()
+    conn.close()
+
 def main():
     parser = argparse.ArgumentParser(description='Crypto analysis tool.')
     parser.add_argument('--product_id', type=str, help='Product ID for the crypto asset')
@@ -534,9 +561,30 @@ def main():
     parser.add_argument('--calculate_correlation_interval_with_composite', action='store_true', help='Calculate correlation between price changes and indicators')
     parser.add_argument('--granularity', type=str, default='ONE_MINUTE', choices=['ONE_MINUTE', 'FIVE_MINUTE', 'FIFTEEN_MINUTE', 'ONE_HOUR', 'SIX_HOURS', 'ONE_DAY'],
                         help='Granularity of the data to fetch. Default is ONE_MINUTE.')
-
+    parser.add_argument('--importdb', action='store_true', help='Import fetched data into SQLite database')
 
     args = parser.parse_args()
+
+    if args.importdb:
+        start_date = datetime.strptime(args.start_date, "%Y-%m-%d")
+        end_date = datetime.strptime(args.end_date, "%Y-%m-%d")
+        all_data = []
+        current_date = start_date
+
+        while current_date < end_date:
+            next_date = current_date + timedelta(days=1)
+            start_timestamp = int(current_date.timestamp())
+            end_timestamp = int(next_date.timestamp())
+            
+            data = fetch_data(client, args.product_id, start_timestamp, end_timestamp, args.granularity)
+            all_data.extend(data)
+            
+            current_date = next_date
+            time.sleep(0.2)  # Sleep for 200ms to ensure we stay within 5 requests per second
+        
+        import_data_to_sqlite(all_data)
+        print(f"Data imported into SQLite database successfully.")
+        return
 
     if args.find_cyclical_patterns:
         start_date = datetime.strptime(args.start_date, "%Y-%m-%d")
