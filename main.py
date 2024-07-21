@@ -15,6 +15,7 @@ client = RESTClient()
 def fetch_data(api_client, product_id, start, end, granularity="FIFTEEN_MINUTE"):
     while True:
         try:
+            print(f"Fetching data for {product_id} from {start} to {end} with granularity {granularity}")
             response = api_client.get_candles(
                 product_id=product_id,
                 start=start,
@@ -50,27 +51,20 @@ def analyze_intervals(df):
     return grouped
 
 def find_cyclical_patterns(api_client, product_id, start_date, end_date, granularity="FIFTEEN_MINUTE"):
-    current_date = start_date
-    all_data = []
-    request_count = 0
-    
-    while current_date < end_date:
-        if request_count >= 10000:
-            print("Hourly request limit reached. Waiting for an hour before continuing...")
-            time.sleep(3600)  # Wait for an hour
-            request_count = 0
-        
-        next_date = current_date + timedelta(days=1)
-        start_timestamp = int(current_date.timestamp())
-        end_timestamp = int(next_date.timestamp())
-        
-        data = fetch_data(api_client, product_id, start_timestamp, end_timestamp, granularity)
-        all_data.extend(data)
-        request_count += 1
-        
-        current_date = next_date
-        time.sleep(0.2)  # Sleep for 200ms to ensure we stay within 5 requests per second
-    
+    conn = sqlite3.connect('crypto_data.db')
+    cursor = conn.cursor()
+
+    start_timestamp = int(start_date.timestamp())
+    end_timestamp = int(end_date.timestamp())
+
+    query = '''
+        SELECT * FROM candles
+        WHERE start >= ? AND start <= ?
+    '''
+    cursor.execute(query, (start_timestamp, end_timestamp))
+    all_data = cursor.fetchall()
+    conn.close()
+
     df = process_data(all_data, product_id)
     analyzed_df = analyze_intervals(df)
     
@@ -407,10 +401,10 @@ def monitor_significant_volume_changes(df, volume_threshold=0.05):
     return signals
 
 def calculate_correlation_interval_with_volume_twenty_four(client, product_id, start_date, end_date, interval_time, granularity="FIFTEEN_MINUTE"):
-    data = get_price_changes_for_interval(client, product_id, start_date, end_date, interval_time, granularity)
+    data = get_price_changes_for_interval_from_db('crypto_data.db', product_id, start_date, end_date, interval_time)
     for index, row in data.iterrows():
         row_time = row['start']  # Assuming 'start' is the column with the datetime information
-        data.at[index, 'volume_change_since_twenty_four_hours'] = get_volume_change_last_24_hours(client, product_id, row_time)
+        data.at[index, 'volume_change_since_twenty_four_hours'] = get_volume_change_last_24_hours_from_db('crypto_data.db', product_id, row_time)
     print(data)
     correlation_with_volume_change_since_twenty_four_hours = data['price_change'].corr(data['volume_change_since_twenty_four_hours'])
     print(f"Correlation with volume change since twenty four hours: {correlation_with_volume_change_since_twenty_four_hours}")
@@ -466,30 +460,14 @@ def calculate_correlation_with_composite(api_client, product_id, start_date, end
     return correlation_with_composite_score
 
 def calculate_correlation_interval_with_twenty_four(client, product_id, start_date, end_date, interval_time, granularity="FIFTEEN_MINUTE"):
-    data = get_price_changes_for_interval(client, product_id, start_date, end_date, interval_time, granularity)
-    print("data dude")
-    print(data)
+    data = get_price_changes_for_interval_from_db('crypto_data.db', product_id, start_date, end_date, interval_time)
     for index, row in data.iterrows():
         row_time = row['start']  # Assuming 'start' is the column with the datetime information
-        data.at[index, 'price_change_since_twenty_four_hours'] = get_price_change_last_24_hours(client, product_id, row_time)
+        data.at[index, 'price_change_since_twenty_four_hours'] = get_price_change_last_24_hours_from_db('crypto_data.db', product_id, row_time)
     print(data)
-    # df['close'] = pd.to_numeric(df['close'], errors='coerce')
-
-    # df.dropna(subset=['close'], inplace=True)  # Drop rows where 'close' is NaN
-
-    # df['Price_Change'] = ((df['close'] - df['open']) / df['open']) * 100
-    # df['RSI'] = calculate_rsi(df['close'].tolist())
-    # df['MACD'], df['Signal_Line'] = calculate_macd(df['close'].tolist())
-
-    # correlation_with_rsi = df['Price_Change'].corr(df['RSI'])
-    # correlation_with_macd = df['Price_Change'].corr(df['MACD'])
-    # correlation_with_signal = df['Price_Change'].corr(df['Signal_Line'])
     correlation_with_price_change_since_twenty_four_hours = data['price_change'].corr(data['price_change_since_twenty_four_hours'])
     print(f"Correlation with price change since twenty four hours: {correlation_with_price_change_since_twenty_four_hours}")
 
-    # print(f"Correlation with RSI: {correlation_with_rsi}")
-    # print(f"Correlation with MACD: {correlation_with_macd}")
-    # print(f"Correlation with Signal Line: {correlation_with_signal}")
 def determine_granularity(start_time, end_time):
     total_minutes = (end_time - start_time).total_seconds() / 60
     if total_minutes <= 300:
@@ -499,7 +477,7 @@ def determine_granularity(start_time, end_time):
     elif total_minutes <= 7200:
         return "FIFTEEN_MINUTES"
     elif total_minutes <= 14400:
-        return "THIRTY_MINUTES"
+        return "ONE_HOUR"
     else:
         return "ONE_DAY"
 
@@ -509,11 +487,10 @@ def calculate_indicators(df, raw_data, product_id):
     df['MACD'], df['MACD_signal'], df['MACD_hist'] = talib.MACD(df['close'], fastperiod=12, slowperiod=26, signalperiod=9)
     df['Price_Change'] = df['close'].diff()
     df['Volume_Change'] = df['volume'].diff()
-    # df['Volume_Change_Since_Twenty_Four_Hours'] = (float(raw_data[0]['volume']) - float(raw_data[-1]['volume'])) / float(raw_data[-1]['volume'])
 
     for index, row in df.iterrows():
         row_time = row['start']  # Assuming 'start' is the column with the datetime information
-        df.at[index, 'volume_change_since_twenty_four_hours'] = get_volume_change_last_24_hours(client, product_id, row_time)
+        df.at[index, 'volume_change_since_twenty_four_hours'] = get_volume_change_last_24_hours_from_db('crypto_data.db', product_id, row_time)
     df.dropna(inplace=True)  # Drop NaN values that result from indicator calculations
     return df
 
@@ -542,6 +519,106 @@ def import_data_to_sqlite(data, db_name="crypto_data.db"):
     
     conn.commit()
     conn.close()
+
+def get_price_change_last_24_hours_from_db(db_name, product_id, interval_time):
+    if isinstance(interval_time, str):
+        try:
+            end_time = datetime.strptime(interval_time, "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            print("Invalid datetime format for interval_time. Please use YYYY-MM-DD HH:MM:SS format.")
+            return None
+    elif isinstance(interval_time, pd.Timestamp):
+        end_time = interval_time
+    else:
+        print("Unsupported type for interval_time. Please provide a string or Timestamp.")
+        return None
+    
+    start_time = end_time - timedelta(days=1)
+    end_time_unix = int(end_time.timestamp())
+    start_time_unix = int(start_time.timestamp())
+
+    conn = sqlite3.connect(db_name)
+    cursor = conn.cursor()
+
+    query = '''
+        SELECT open, close FROM candles
+        WHERE start >= ? AND start <= ?
+        ORDER BY start ASC
+    '''
+    cursor.execute(query, (start_time_unix, end_time_unix))
+    data = cursor.fetchall()
+    conn.close()
+    if data:
+        price_change = (float(data[0][1]) - float(data[-1][1])) / float(data[-1][1])
+        return price_change
+    return 0
+
+def get_volume_change_last_24_hours_from_db(db_name, product_id, interval_time):
+    if isinstance(interval_time, str):
+        try:
+            end_time = datetime.strptime(interval_time, "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            print("Invalid datetime format for interval_time. Please use YYYY-MM-DD HH:MM:SS format.")
+            return None
+    elif isinstance(interval_time, datetime):
+        end_time = interval_time
+    elif isinstance(interval_time, pd.Timestamp):
+        end_time = interval_time
+    else:
+        print("Unsupported type for interval_time. Please provide a string or Timestamp.")
+        return None
+
+    start_time = end_time - timedelta(days=1)
+    end_time_unix = int(end_time.timestamp())
+    start_time_unix = int(start_time.timestamp())
+
+    conn = sqlite3.connect(db_name)
+    cursor = conn.cursor()
+
+    query = '''
+        SELECT volume FROM candles
+        WHERE start >= ? AND start <= ?
+        ORDER BY start ASC
+    '''
+    cursor.execute(query, (start_time_unix, end_time_unix))
+    data = cursor.fetchall()
+    conn.close()
+
+    if data:
+        volume_change = (float(data[0][0]) - float(data[-1][0])) / float(data[-1][0])
+        return volume_change
+    return 0
+
+def get_price_changes_for_interval_from_db(db_name, product_id, start_date, end_date, interval_time):
+    conn = sqlite3.connect(db_name)
+    cursor = conn.cursor()
+
+    start_timestamp = int(start_date.timestamp())
+    end_timestamp = int(end_date.timestamp())
+
+    query = '''
+        SELECT start, open, close FROM candles
+        WHERE start >= ? AND start <= ?
+        ORDER BY start ASC
+    '''
+    cursor.execute(query, (start_timestamp, end_timestamp))
+    data = cursor.fetchall()
+    conn.close()
+
+    if not data:
+        return pd.DataFrame(columns=['start', 'price_change'])
+
+    # Convert data to DataFrame
+    df = pd.DataFrame(data, columns=['start', 'open', 'close'])
+    df['start'] = pd.to_datetime(df['start'], unit='s')
+    df['price_change'] = df['close'] - df['open']
+    df['interval_time'] = df['start'].dt.time
+
+    # Filter data for the specified interval time
+    interval_data = df[df['interval_time'] == interval_time]
+    price_changes = interval_data[['start', 'price_change']]
+
+    return price_changes
 
 def main():
     parser = argparse.ArgumentParser(description='Crypto analysis tool.')
