@@ -405,6 +405,7 @@ def calculate_correlation_interval_with_volume_twenty_four(client, product_id, s
     for index, row in data.iterrows():
         row_time = row['start']  # Assuming 'start' is the column with the datetime information
         data.at[index, 'volume_change_since_twenty_four_hours'] = get_volume_change_last_24_hours_from_db('crypto_data.db', product_id, row_time)
+        # data.at[index, 'volume_change_since_twenty_four_hours'] = get_volume_change_last_24_hours(client, product_id, row_time)
     print(data)
     correlation_with_volume_change_since_twenty_four_hours = data['price_change'].corr(data['volume_change_since_twenty_four_hours'])
     print(f"Correlation with volume change since twenty four hours: {correlation_with_volume_change_since_twenty_four_hours}")
@@ -549,7 +550,9 @@ def get_price_change_last_24_hours_from_db(db_name, product_id, interval_time):
     data = cursor.fetchall()
     conn.close()
     if data:
-        price_change = (float(data[0][1]) - float(data[-1][1])) / float(data[-1][1])
+        close_price = data[-1][1]
+        open_price = data[0][1]
+        price_change = (float(close_price) - float(open_price)) / float(open_price)
         return price_change
     return 0
 
@@ -585,7 +588,9 @@ def get_volume_change_last_24_hours_from_db(db_name, product_id, interval_time):
     conn.close()
 
     if data:
-        volume_change = (float(data[0][0]) - float(data[-1][0])) / float(data[-1][0])
+        close_volume = data[-1][0]
+        open_volume = data[0][0]
+        volume_change = (float(close_volume) - float(open_volume)) / float(open_volume)
         return volume_change
     return 0
 
@@ -676,12 +681,12 @@ def main():
             return
         start_date = datetime.strptime(args.start_date, "%Y-%m-%d")
         end_date = datetime.strptime(args.end_date, "%Y-%m-%d")
-        price_changes = get_price_changes_for_interval(client, args.product_id, start_date, end_date, interval_time, args.granularity)
+        price_changes = get_price_changes_for_interval_from_db('crypto_data.db', args.product_id, start_date, end_date, interval_time)
         print(price_changes)
 
     if args.previous_twenty_four_hours:
         interval_time = args.interval_time if args.interval_time else datetime.now()
-        price_change = get_price_change_last_24_hours(client, args.product_id, interval_time)
+        price_change = get_price_change_last_24_hours_from_db('crypto_data.db', args.product_id, interval_time)
         if price_change is not None:
             print(f"Price change in the last 24 hours for {args.product_id} as of {interval_time}: {price_change}%")
 
