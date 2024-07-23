@@ -227,32 +227,21 @@ def group_by_product_ids(product_ids):
     first_parts = get_unique_first_part_of_product_ids(product_ids)
     return {first_part: get_product_ids_which_match_first_part(product_ids, first_part) for first_part in first_parts}
 
-def discover_abc_pattern_with_volume_fibonacci(product_id, days_back=7, granularity="ONE_DAY"):
+def discover_abc_pattern_with_volume_fibonacci(product_id, days_back=1, granularity="ONE_DAY"):
     end_time = datetime.now()
     start_time = end_time - timedelta(days=days_back)
 
-    end_time_unix = int(end_time.timestamp())
-    start_time_unix = int(start_time.timestamp())
-    
-    try:
-        candles = client.get_candles(
-            product_id=product_id, 
-            start=start_time_unix,
-            end=end_time_unix, 
-            granularity=granularity
-        )
-    except Exception as e:
-        print(f"Error fetching historical data for {product_id}: {e}")
-        return None
+    candles = get_candle_data_filtered_by_date("crypto_data.db", product_id, start_time, end_time)
+    candles = process_data(candles, product_id)
 
-    close_prices = [float(candle['close']) for candle in candles['candles']]
-    volumes = [float(candle['volume']) for candle in candles['candles']]
-    timestamps = [datetime.utcfromtimestamp(int(candle['start'])) for candle in candles['candles']]
+    close_prices = candles['close']
+    volumes = candles['volume']
+    timestamps = candles['start']
 
     try:
-        A_index = np.argmax(close_prices)
-        C_index = len(close_prices) - 1
-        B_index = np.argmin(close_prices[A_INDEX:C_INDEX]) + A_INDEX
+        A_INDEX = np.argmax(close_prices)
+        C_INDEX = len(close_prices) - 1
+        B_INDEX = np.argmin(close_prices[A_INDEX:C_INDEX]) + A_INDEX
         
         A_point = (timestamps[A_INDEX], close_prices[A_INDEX], volumes[A_INDEX])
         B_point = (timestamps[B_INDEX], close_prices[B_INDEX], volumes[B_INDEX])
@@ -687,6 +676,7 @@ def main():
                         help='Granularity of the data to fetch. Default is ONE_MINUTE.')
     parser.add_argument('--importdb', action='store_true', help='Import fetched data into SQLite database')
     parser.add_argument('--find_best_correlation', action='store_true', help='Find the best correlation interval')
+    parser.add_argument('--discover-abc-pattern', action='store_true', help='Discover ABC pattern with volume and Fibonacci levels')
 
     args = parser.parse_args()
 
@@ -818,6 +808,14 @@ def main():
 
         best_interval, best_correlation = find_best_correlation(db_name, product_id, start_date, end_date)
         print(f"Best interval: {best_interval}, Correlation: {best_correlation}")
+
+    if args.discover_abc_pattern:
+        result = discover_abc_pattern_with_volume_fibonacci(args.product_id)
+        if result:
+            A_point, B_point, C_point, fib_retracement = result
+            print(f"ABC Pattern found: A={A_point}, B={B_point}, C={C_point}, Fibonacci Retracement={fib_retracement}")
+        else:
+            print("No ABC pattern found.")
 
 if __name__ == "__main__":
     main()
