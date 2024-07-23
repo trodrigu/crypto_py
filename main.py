@@ -394,8 +394,6 @@ def calculate_correlation_interval_with_volume_twenty_four(client, product_id, s
     for index, row in data.iterrows():
         row_time = row['start']  # Assuming 'start' is the column with the datetime information
         data.at[index, 'volume_change_since_twenty_four_hours'] = get_volume_change_last_24_hours_from_db('crypto_data.db', product_id, row_time)
-        # data.at[index, 'volume_change_since_twenty_four_hours'] = get_volume_change_last_24_hours(client, product_id, row_time)
-    print(data)
     correlation_with_volume_change_since_twenty_four_hours = data['price_change'].corr(data['volume_change_since_twenty_four_hours'])
     print(f"Correlation with volume change since twenty four hours: {correlation_with_volume_change_since_twenty_four_hours}")
 
@@ -452,7 +450,6 @@ def calculate_correlation_interval_with_twenty_four(client, product_id, start_da
     for index, row in data.iterrows():
         row_time = row['start']  # Assuming 'start' is the column with the datetime information
         data.at[index, 'price_change_since_twenty_four_hours'] = get_price_change_last_24_hours_from_db('crypto_data.db', product_id, row_time)
-    print(data)
     correlation_with_price_change_since_twenty_four_hours = data['price_change'].corr(data['price_change_since_twenty_four_hours'])
     print(f"Correlation with price change since twenty four hours: {correlation_with_price_change_since_twenty_four_hours}")
 
@@ -470,7 +467,6 @@ def determine_granularity(start_time, end_time):
         return "ONE_DAY"
 
 def calculate_indicators(df, product_id):
-    print(df)
     df['RSI'] = talib.RSI(df['close'], timeperiod=14)
     df['MACD'], df['MACD_signal'], df['MACD_hist'] = talib.MACD(df['close'], fastperiod=12, slowperiod=26, signalperiod=9)
     df['Price_Change'] = df['close'].diff()
@@ -516,6 +512,8 @@ def get_price_change_last_24_hours_from_db(db_name, product_id, interval_time):
             print("Invalid datetime format for interval_time. Please use YYYY-MM-DD HH:MM:SS format.")
             return None
     elif isinstance(interval_time, pd.Timestamp):
+        end_time = interval_time
+    elif isinstance(interval_time, datetime):
         end_time = interval_time
     else:
         print("Unsupported type for interval_time. Please provide a string or Timestamp.")
@@ -719,6 +717,7 @@ def main():
 
     if args.previous_twenty_four_hours:
         interval_time = args.interval_time if args.interval_time else datetime.now()
+        print(f"interval_time: {interval_time}")
         price_change = get_price_change_last_24_hours_from_db('crypto_data.db', args.product_id, interval_time)
         if price_change is not None:
             print(f"Price change in the last 24 hours for {args.product_id} as of {interval_time}: {price_change}%")
@@ -803,8 +802,10 @@ def main():
     if args.find_best_correlation:
         db_name = "crypto_data.db"
         product_id = args.product_id
-        end_date = datetime.now()
-        start_date = end_date - timedelta(days=3*365)  # Look back 3 years
+        # end_date = datetime.now()
+        # start_date = end_date - timedelta(days=3*365)  # Look back 3 years
+        start_date = datetime.strptime(args.start_date, "%Y-%m-%d")
+        end_date = datetime.strptime(args.end_date, "%Y-%m-%d")
 
         best_interval, best_correlation = find_best_correlation(db_name, product_id, start_date, end_date)
         print(f"Best interval: {best_interval}, Correlation: {best_correlation}")
