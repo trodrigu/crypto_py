@@ -40,7 +40,7 @@ def process_data(data, product_id):
     df['volume'] = df['volume'].astype(float)
     df['price_change'] = df['close'] - df['open']
     df['volatility'] = df['high'] - df['low']
-    df = calculate_indicators(df, data, product_id)
+    df = calculate_indicators(df, product_id)
     return df
 
 def analyze_intervals(df):
@@ -411,8 +411,6 @@ def calculate_correlation_interval_with_volume_twenty_four(client, product_id, s
     print(f"Correlation with volume change since twenty four hours: {correlation_with_volume_change_since_twenty_four_hours}")
 
 def calculate_composite_score(df, product_id):
-    print("hi")
-    print(df)
     df['Standardized_Volume_Change'] = (df['Volume_Change'] - df['Volume_Change'].mean()) / df['Volume_Change'].std()
     df['Standardized_RSI'] = (df['RSI'] - df['RSI'].mean()) / df['RSI'].std()
     df['Standardized_MACD'] = (df['MACD'] - df['MACD'].mean()) / df['MACD'].std()
@@ -482,7 +480,7 @@ def determine_granularity(start_time, end_time):
     else:
         return "ONE_DAY"
 
-def calculate_indicators(df, raw_data, product_id):
+def calculate_indicators(df, product_id):
     print(df)
     df['RSI'] = talib.RSI(df['close'], timeperiod=14)
     df['MACD'], df['MACD_signal'], df['MACD_hist'] = talib.MACD(df['close'], fastperiod=12, slowperiod=26, signalperiod=9)
@@ -594,6 +592,24 @@ def get_volume_change_last_24_hours_from_db(db_name, product_id, interval_time):
         return volume_change
     return 0
 
+def get_candle_data_filtered_by_date(db_name, product_id, start_date, end_date):
+    conn = sqlite3.connect(db_name)
+    cursor = conn.cursor()
+
+    start_timestamp = int(start_date.timestamp())
+    end_timestamp = int(end_date.timestamp())
+
+    query = '''
+        SELECT start, low, high, open, close, volume FROM candles
+        WHERE start >= ? AND start <= ?
+        ORDER BY start ASC
+    '''
+    cursor.execute(query, (start_timestamp, end_timestamp))
+    data = cursor.fetchall()
+    conn.close()
+
+    return data
+
 def get_price_changes_for_interval_from_db(db_name, product_id, start_date, end_date, interval_time):
     conn = sqlite3.connect(db_name)
     cursor = conn.cursor()
@@ -625,6 +641,32 @@ def get_price_changes_for_interval_from_db(db_name, product_id, start_date, end_
 
     return price_changes
 
+
+def calculate_correlation(df, interval_time):
+    df['interval_time'] = df['start'].dt.time
+    interval_data = df[df['interval_time'] == interval_time]
+    if len(interval_data) < 2:
+        return None
+    return interval_data['price_change'].corr(interval_data['volume_change_since_twenty_four_hours'])
+    # return interval_data['price_change'].corr(interval_data['close'])
+
+def find_best_correlation(db_name, product_id, start_date, end_date):
+    all_data = get_candle_data_filtered_by_date(db_name, product_id, start_date, end_date)
+    df = process_data(all_data, product_id)
+
+    best_correlation = -1
+    best_interval = None
+
+    for hour in range(24):
+        for minute in range(0, 60, 15):  # Checking every 15 minutes
+            interval_time = (datetime.min + timedelta(hours=hour, minutes=minute)).time()
+            correlation = calculate_correlation(df, interval_time)
+            if correlation is not None and correlation > best_correlation:
+                best_correlation = correlation
+                best_interval = interval_time
+
+    return best_interval, best_correlation
+
 def main():
     parser = argparse.ArgumentParser(description='Crypto analysis tool.')
     parser.add_argument('--product_id', type=str, help='Product ID for the crypto asset')
@@ -644,6 +686,7 @@ def main():
     parser.add_argument('--granularity', type=str, default='ONE_MINUTE', choices=['ONE_MINUTE', 'FIVE_MINUTE', 'FIFTEEN_MINUTE', 'ONE_HOUR', 'SIX_HOURS', 'ONE_DAY'],
                         help='Granularity of the data to fetch. Default is ONE_MINUTE.')
     parser.add_argument('--importdb', action='store_true', help='Import fetched data into SQLite database')
+    parser.add_argument('--find_best_correlation', action='store_true', help='Find the best correlation interval')
 
     args = parser.parse_args()
 
@@ -767,6 +810,14 @@ def main():
             print("Error: Please specify both --product_id and --interval_time for correlation calculations.")
             return
 
+    if args.find_best_correlation:
+        db_name = "crypto_data.db"
+        product_id = args.product_id
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=3*365)  # Look back 3 years
+
+        best_interval, best_correlation = find_best_correlation(db_name, product_id, start_date, end_date)
+        print(f"Best interval: {best_interval}, Correlation: {best_correlation}")
 
 if __name__ == "__main__":
     main()
