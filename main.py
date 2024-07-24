@@ -12,6 +12,14 @@ import sqlite3
 # Initialize the client with your Coinbase API credentials
 client = RESTClient()
 
+OVERLAP_STUDIES = ['BBANDS', 'DEMA', 'EMA', 'HT_TRENDLINE', 'KAMA', 'MA', 'MAMA', 'MAVP', 'MIDPOINT', 'MIDPRICE', 'SAR', 'SAREXT', 'SMA', 'T3', 'TEMA', 'TRIMA', 'WMA']
+MOMENTUM_INDICATORS = ['ADX', 'ADXR', 'APO', 'AROON', 'AROONOSC', 'BOP', 'CCI', 'CMO', 'DX', 'MACD', 'MACDEXT', 'MACDFIX', 'MFI', 'MINUS_DI', 'MINUS_DM', 'MOM', 'PLUS_DI', 'PLUS_DM', 'PPO', 'ROC', 'ROCP', 'ROCR', 'ROCR100', 'RSI', 'STOCH', 'STOCHF', 'STOCHRSI', 'TRIX', 'ULTOSC', 'WILLR']
+VOLUME_INDICATORS = ['AD', 'ADOSC', 'OBV']
+CYCLE_INDICATORS = ['HT_DCPERIOD', 'HT_DCPHASE', 'HT_PHASOR', 'HT_SINE', 'HT_TRENDMODE']
+VOLATILITY_INDICATORS = ['ATR', 'NATR', 'TRANGE']
+PATTERN_RECOGNITION = ['CDL2CROWS', 'CDL3BLACKCROWS', 'CDL3INSIDE', 'CDL3LINESTRIKE', 'CDL3OUTSIDE', 'CDL3STARSINSOUTH', 'CDL3WHITESOLDIERS', 'CDLABANDONEDBABY', 'CDLADVANCEBLOCK', 'CDLBELTHOLD', 'CDLBREAKAWAY', 'CDLCLOSINGMARUBOZU', 'CDLCONCEALBABYSWALL', 'CDLCOUNTERATTACK', 'CDLDARKCLOUDCOVER', 'CDLDOJI', 'CDLDOJISTAR', 'CDLDRAGONFLYDOJI', 'CDLENGULFING', 'CDLEVENINGDOJISTAR', 'CDLEVENINGSTAR', 'CDLGAPSIDESIDEWHITE', 'CDLGRAVESTONEDOJI', 'CDLHAMMER', 'CDLHANGINGMAN', 'CDLHARAMI', 'CDLHARAMICROSS', 'CDLHIGHWAVE', 'CDLHIKKAKE', 'CDLHIKKAKEMOD', 'CDLHOMINGPIGEON', 'CDLIDENTICAL3CROWS', 'CDLINNECK', 'CDLINVERTEDHAMMER', 'CDLKICKING', 'CDLKICKINGBYLENGTH', 'CDLLADDERBOTTOM', 'CDLLONGLEGGEDDOJI', 'CDLLONGLINE', 'CDLMARUBOZU', 'CDLMATCHINGLOW', 'CDLMATHOLD', 'CDLMORNINGDOJISTAR', 'CDLMORNINGSTAR', 'CDLONNECK', 'CDLPIERCING', 'CDLRICKSHAWMAN', 'CDLRISEFALL3METHODS', 'CDLSEPARATINGLINES', 'CDLSHOOTINGSTAR', 'CDLSHORTLINE', 'CDLSPINNINGTOP', 'CDLSTALLEDPATTERN', 'CDLSTICKSANDWICH', 'CDLTAKURI', 'CDLTASUKIGAP', 'CDLTHRUSTING', 'CDLTRISTAR', 'CDLUNIQUE3RIVER', 'CDLUPSIDEGAP2CROWS', 'CDLXSIDEGAP3METHODS']
+STATISTIC_FUNCTIONS = ['BETA', 'CORREL', 'LINEARREG', 'LINEARREG_ANGLE', 'LINEARREG_INTERCEPT', 'LINEARREG_SLOPE', 'STDDEV', 'TSF', 'VAR']
+
 def fetch_data(api_client, product_id, start, end, granularity="FIFTEEN_MINUTE"):
     while True:
         try:
@@ -40,7 +48,7 @@ def process_data(data, product_id):
     df['volume'] = df['volume'].astype(float)
     df['price_change'] = df['close'] - df['open']
     df['volatility'] = df['high'] - df['low']
-    df = calculate_indicators(df, product_id)
+    df = calculate_indicators_for_base(df, product_id)
     return df
 
 def analyze_intervals(df):
@@ -50,7 +58,7 @@ def analyze_intervals(df):
     }).reset_index()
     return grouped
 
-def find_cyclical_patterns(api_client, product_id, start_date, end_date, granularity="FIFTEEN_MINUTE"):
+def find_cyclical_patterns(product_id, start_date, end_date, granularity="FIFTEEN_MINUTE"):
     conn = sqlite3.connect('crypto_data.db')
     cursor = conn.cursor()
 
@@ -107,9 +115,9 @@ def signal_buy_opportunity(product_id, days_back=7, granularity="ONE_DAY"):
         volume_change = 0
 
     try:
-        A_index = np.argmax(close_prices)
-        C_index = len(close_prices) - 1
-        B_index = np.argmin(close_prices[A_INDEX:C_INDEX]) + A_INDEX
+        A_INDEX = np.argmax(close_prices)
+        C_INDEX = len(close_prices) - 1
+        B_INDEX = np.argmin(close_prices[A_INDEX:C_INDEX]) + A_INDEX
         
         A_point = (timestamps[A_INDEX], close_prices[A_INDEX], volumes[A_INDEX])
         B_point = (timestamps[B_INDEX], close_prices[B_INDEX], volumes[B_INDEX])
@@ -466,7 +474,7 @@ def determine_granularity(start_time, end_time):
     else:
         return "ONE_DAY"
 
-def calculate_indicators(df, product_id):
+def calculate_indicators_for_base(df, product_id):
     df['RSI'] = talib.RSI(df['close'], timeperiod=14)
     df['MACD'], df['MACD_signal'], df['MACD_hist'] = talib.MACD(df['close'], fastperiod=12, slowperiod=26, signalperiod=9)
     df['Price_Change'] = df['close'].diff()
@@ -628,6 +636,43 @@ def get_price_changes_for_interval_from_db(db_name, product_id, start_date, end_
 
     return price_changes
 
+def get_volume_changes_for_interval_from_db(db_name, product_id, start_date, end_date, interval_time):
+    conn = sqlite3.connect(db_name)
+    cursor = conn.cursor()
+
+    start_timestamp = int(start_date.timestamp())
+    end_timestamp = int(end_date.timestamp())
+
+    query = '''
+    SELECT start, open, close, volume FROM candles
+    WHERE start >= ? AND start <= ?
+    ORDER BY start ASC
+    '''
+
+    cursor.execute(query, (start_timestamp, end_timestamp))
+    data = cursor.fetchall()
+    conn.close()
+
+    if not data:
+        return pd.DataFrame(columns=['start', 'volume_change'])
+
+    # Convert data to DataFrame
+    df = pd.DataFrame(data, columns=['start', 'open', 'close', 'volume'])
+    df['start'] = pd.to_datetime(df['start'], unit='s')
+    df['volume_change'] = df['volume'].diff()
+    df['price_change'] = df['close'] - df['open']
+    df['interval_time'] = df['start'].dt.time
+
+    # Filter data for the specified interval time
+    interval_data = df[df['interval_time'] == interval_time]
+    for index, row in interval_data.iterrows():
+        row_time = row['start']  # Assuming 'start' is the column with the datetime information
+        interval_data.at[index, 'volume_change_since_twenty_four_hours'] = get_volume_change_last_24_hours_from_db('crypto_data.db', product_id, row_time)
+    interval_data.dropna(inplace=True)  # Drop NaN values that result from indicator calculations
+    volume_changes = interval_data[['start', 'volume_change_since_twenty_four_hours', 'price_change']]
+    return volume_changes
+
+
 
 def calculate_correlation(df, interval_time):
     df['interval_time'] = df['start'].dt.time
@@ -654,6 +699,47 @@ def find_best_correlation(db_name, product_id, start_date, end_date):
 
     return best_interval, best_correlation
 
+def calculate_indicators(indicators, product_id, start_date, end_date, granularity):
+    start_date = datetime.strptime(start_date, "%Y-%m-%d")
+    end_date = datetime.strptime(end_date, "%Y-%m-%d")
+    data = get_candle_data_filtered_by_date("crypto_data.db", product_id, start_date, end_date)
+
+    df = pd.DataFrame(data, columns=['start', 'low', 'high', 'open', 'close', 'volume'])
+    df['start'] = pd.to_datetime(df['start'], unit='s')
+
+    for indicator in indicators:
+        try:
+            if indicator == 'BBANDS':
+                result = talib.BBANDS(df['close'])
+                print(f"{indicator}: {result}")
+            elif indicator == 'MAMA':
+                result = talib.MAMA(df['close'])
+                print(f"{indicator}: {result}")
+            elif indicator == 'MAVP':
+                result = talib.MAVP(df['close'], df['volume'])  # Example, adjust as needed
+                print(f"{indicator}: {result}")
+            elif indicator == 'MIDPRICE':
+                result = talib.MIDPRICE(df['high'], df['low'])
+                print(f"{indicator}: {result}")
+            elif indicator == 'SAR':
+                result = talib.SAR(df['high'], df['low'])
+                print(f"{indicator}: {result}")
+            elif indicator == 'SAREXT':
+                result = talib.SAREXT(df['high'], df['low'])
+                print(f"{indicator}: {result}")
+            elif indicator in ['DEMA', 'EMA', 'HT_TRENDLINE', 'KAMA', 'MA', 'MIDPOINT', 'SMA', 'T3', 'TEMA', 'TRIMA', 'WMA']:
+                result = getattr(talib, indicator)(df['close'])
+                print(f"{indicator}: {result}")
+            elif indicator in talib.get_function_groups()['Pattern Recognition']:
+                result = getattr(talib, indicator)(df['open'], df['high'], df['low'], df['close'])
+                result = result[result != 0]
+                if not result.empty:
+                    print(f"{indicator}: {result}")
+            else:
+                result = getattr(talib, indicator)(df['close'])
+        except Exception as e:
+            print(f"Error calculating {indicator}: {e}")
+
 def main():
     parser = argparse.ArgumentParser(description='Crypto analysis tool.')
     parser.add_argument('--product_id', type=str, help='Product ID for the crypto asset')
@@ -673,8 +759,18 @@ def main():
     parser.add_argument('--granularity', type=str, default='ONE_MINUTE', choices=['ONE_MINUTE', 'FIVE_MINUTE', 'FIFTEEN_MINUTE', 'ONE_HOUR', 'SIX_HOURS', 'ONE_DAY'],
                         help='Granularity of the data to fetch. Default is ONE_MINUTE.')
     parser.add_argument('--importdb', action='store_true', help='Import fetched data into SQLite database')
-    parser.add_argument('--find_best_correlation', action='store_true', help='Find the best correlation interval')
+    parser.add_argument('--find-best-correlation', action='store_true', help='Find the best correlation between price changes and volume changes for the given product ID')
     parser.add_argument('--discover-abc-pattern', action='store_true', help='Discover ABC pattern with volume and Fibonacci levels')
+    parser.add_argument('--days_back', type=int, default=7, help='Number of days to look back for the ABC pattern')
+
+    # Add switches for each category of indicators
+    parser.add_argument('--overlap-studies', action='store_true', help='Calculate Overlap Studies indicators')
+    parser.add_argument('--momentum-indicators', action='store_true', help='Calculate Momentum Indicators')
+    parser.add_argument('--volume-indicators', action='store_true', help='Calculate Volume Indicators')
+    parser.add_argument('--cycle-indicators', action='store_true', help='Calculate Cycle Indicators')
+    parser.add_argument('--volatility-indicators', action='store_true', help='Calculate Volatility Indicators')
+    parser.add_argument('--pattern-recognition', action='store_true', help='Calculate Pattern Recognition indicators')
+    parser.add_argument('--statistic-functions', action='store_true', help='Calculate Statistic Functions')
 
     args = parser.parse_args()
 
@@ -699,10 +795,59 @@ def main():
         print(f"Data imported into SQLite database successfully.")
         return
 
+    if args.discover_abc_pattern:
+        granularities = ['ONE_MINUTE', 'FIVE_MINUTE', 'FIFTEEN_MINUTE', 'ONE_HOUR', 'SIX_HOURS', 'ONE_DAY']
+        days_back_options = [7, 14, 30, 60, 90]
+
+        patterns_found = []
+
+        for granularity in granularities:
+            for days_back in days_back_options:
+                result = discover_abc_pattern_with_volume_fibonacci(args.product_id, days_back, granularity)
+                if result:
+                    A_point, B_point, C_point, fib_retracement = result
+                    patterns_found.append({
+                        'granularity': granularity,
+                        'days_back': days_back,
+                        'A_point': A_point,
+                        'B_point': B_point,
+                        'C_point': C_point,
+                        'fib_retracement': fib_retracement
+                    })
+
+        if patterns_found:
+            print("ABC Patterns found:")
+            for pattern in patterns_found:
+                print(f"Granularity: {pattern['granularity']}, Days Back: {pattern['days_back']}")
+                print(f"A: {pattern['A_point']}, B: {pattern['B_point']}, C: {pattern['C_point']}, Fibonacci Retracement: {pattern['fib_retracement']}")
+        else:
+            print("No ABC patterns found.")
+
+    if args.overlap_studies:
+        calculate_indicators(OVERLAP_STUDIES, args.product_id, args.start_date, args.end_date, args.granularity)
+
+    if args.momentum_indicators:
+        calculate_indicators(MOMENTUM_INDICATORS, args.product_id, args.start_date, args.end_date, args.granularity)
+
+    if args.volume_indicators:
+        calculate_indicators(VOLUME_INDICATORS, args.product_id, args.start_date, args.end_date, args.granularity)
+
+    if args.cycle_indicators:
+        calculate_indicators(CYCLE_INDICATORS, args.product_id, args.start_date, args.end_date, args.granularity)
+
+    if args.volatility_indicators:
+        calculate_indicators(VOLATILITY_INDICATORS, args.product_id, args.start_date, args.end_date, args.granularity)
+
+    if args.pattern_recognition:
+        calculate_indicators(PATTERN_RECOGNITION, args.product_id, args.start_date, args.end_date, args.granularity)
+
+    if args.statistic_functions:
+        calculate_indicators(STATISTIC_FUNCTIONS, args.product_id, args.start_date, args.end_date, args.granularity)
+
     if args.find_cyclical_patterns:
         start_date = datetime.strptime(args.start_date, "%Y-%m-%d")
         end_date = datetime.strptime(args.end_date, "%Y-%m-%d")
-        find_cyclical_patterns(client, args.product_id, start_date, end_date, args.granularity)
+        find_cyclical_patterns(args.product_id, start_date, end_date, args.granularity)
 
     if args.price_changes_for_interval:
         try:
@@ -798,6 +943,15 @@ def main():
         if not args.product_id or not args.interval_time:
             print("Error: Please specify both --product_id and --interval_time for correlation calculations.")
             return
+        try:
+            interval_time = datetime.strptime(args.interval_time, "%H:%M:%S").time()
+        except ValueError:
+            print("Invalid time format for interval_time. Please use HH:MM:SS format.")
+            return
+        start_date = datetime.strptime(args.start_date, "%Y-%m-%d")
+        end_date = datetime.strptime(args.end_date, "%Y-%m-%d")
+        volume_changes = get_volume_changes_for_interval_from_db("crypto_data.db", args.product_id, start_date, end_date, interval_time)
+        print(volume_changes)
 
     if args.find_best_correlation:
         db_name = "crypto_data.db"
