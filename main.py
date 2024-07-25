@@ -401,7 +401,7 @@ def calculate_correlation_interval_with_volume_twenty_four(client, product_id, s
     data = get_price_changes_for_interval_from_db('crypto_data.db', product_id, start_date, end_date, interval_time)
     for index, row in data.iterrows():
         row_time = row['start']  # Assuming 'start' is the column with the datetime information
-        data.at[index, 'volume_change_since_twenty_four_hours'] = get_volume_change_last_24_hours_from_db('crypto_data.db', product_id, row_time)
+        data.at[index, 'volume_change_since_twenty_four_hours'] = get_volume_change_last_hours_from_db('crypto_data.db', product_id, row_time)
     correlation_with_volume_change_since_twenty_four_hours = data['price_change'].corr(data['volume_change_since_twenty_four_hours'])
     print(f"Correlation with volume change since twenty four hours: {correlation_with_volume_change_since_twenty_four_hours}")
 
@@ -482,7 +482,12 @@ def calculate_indicators_for_base(df, product_id):
 
     for index, row in df.iterrows():
         row_time = row['start']  # Assuming 'start' is the column with the datetime information
-        df.at[index, 'volume_change_since_twenty_four_hours'] = get_volume_change_last_24_hours_from_db('crypto_data.db', product_id, row_time)
+        df.at[index, 'volume_change_since_twenty_four_hours'] = get_volume_change_last_hours_from_db('crypto_data.db', product_id, row_time)
+        df.at[index, 'volume_change_since_one_hour'] = get_volume_change_last_hours_from_db('crypto_data.db', product_id, row_time, hours=1)
+        df.at[index, 'volume_change_since_six_hours'] = get_volume_change_last_hours_from_db('crypto_data.db', product_id, row_time, hours=6)
+        df.at[index, 'volume_change_since_twelve_hours'] = get_volume_change_last_hours_from_db('crypto_data.db', product_id, row_time, hours=12)
+        df.at[index, 'volume_change_since_seven_days'] = get_volume_change_last_hours_from_db('crypto_data.db', product_id, row_time, hours=7*24)
+        df.at[index, 'volume_change_since_thirty_days'] = get_volume_change_last_hours_from_db('crypto_data.db', product_id, row_time, hours=30*24)
     df.dropna(inplace=True)  # Drop NaN values that result from indicator calculations
     return df
 
@@ -549,7 +554,7 @@ def get_price_change_last_24_hours_from_db(db_name, product_id, interval_time):
         return price_change
     return 0
 
-def get_volume_change_last_24_hours_from_db(db_name, product_id, interval_time):
+def get_volume_change_last_hours_from_db(db_name, product_id, interval_time, hours=24):
     if isinstance(interval_time, str):
         try:
             end_time = datetime.strptime(interval_time, "%Y-%m-%d %H:%M:%S")
@@ -564,7 +569,7 @@ def get_volume_change_last_24_hours_from_db(db_name, product_id, interval_time):
         print("Unsupported type for interval_time. Please provide a string or Timestamp.")
         return None
 
-    start_time = end_time - timedelta(days=1)
+    start_time = end_time - timedelta(hours=hours)
     end_time_unix = int(end_time.timestamp())
     start_time_unix = int(start_time.timestamp())
 
@@ -667,37 +672,71 @@ def get_volume_changes_for_interval_from_db(db_name, product_id, start_date, end
     interval_data = df[df['interval_time'] == interval_time]
     for index, row in interval_data.iterrows():
         row_time = row['start']  # Assuming 'start' is the column with the datetime information
-        interval_data.at[index, 'volume_change_since_twenty_four_hours'] = get_volume_change_last_24_hours_from_db('crypto_data.db', product_id, row_time)
+        interval_data.at[index, 'volume_change_since_twenty_four_hours'] = get_volume_change_last_hours_from_db('crypto_data.db', product_id, row_time)
+        # interval_data.at[index, 'volume_change_since_one_hour'] = get_volume_change_last_hours_from_db('crypto_data.db', product_id, row_time, hours=1)
+        # interval_data.at[index, 'volume_change_since_six_hours'] = get_volume_change_last_hours_from_db('crypto_data.db', product_id, row_time, hours=6)
+        # interval_data.at[index, 'volume_change_since_twelve_hours'] = get_volume_change_last_hours_from_db('crypto_data.db', product_id, row_time, hours=12)
+        # interval_data.at[index, 'volume_change_since_seven_days'] = get_volume_change_last_hours_from_db('crypto_data.db', product_id, row_time, hours=7*24)
+        # interval_data.at[index, 'volume_change_since_thirty_days'] = get_volume_change_last_hours_from_db('crypto_data.db', product_id, row_time, hours=30*24)
     interval_data.dropna(inplace=True)  # Drop NaN values that result from indicator calculations
     volume_changes = interval_data[['start', 'volume_change_since_twenty_four_hours', 'price_change']]
     return volume_changes
 
 
 
-def calculate_correlation(df, interval_time):
+def calculate_correlation(df, interval_time, volume_change_column='volume_change_since_twenty_four_hours'):
     df['interval_time'] = df['start'].dt.time
     interval_data = df[df['interval_time'] == interval_time]
     if len(interval_data) < 2:
         return None
-    return interval_data['price_change'].corr(interval_data['volume_change_since_twenty_four_hours'])
-    # return interval_data['price_change'].corr(interval_data['close'])
+    return interval_data['price_change'].corr(interval_data[volume_change_column])
 
 def find_best_correlation(db_name, product_id, start_date, end_date):
     all_data = get_candle_data_filtered_by_date(db_name, product_id, start_date, end_date)
     df = process_data(all_data, product_id)
 
-    best_correlation = -1
-    best_interval = None
+    best_correlation_twenty_four = -1
+    best_correlation_one_hour = -1
+    best_correlation_six_hours = -1
+    best_correlation_twelve_hours = -1
+    best_correlation_seven_days = -1
+    best_correlation_thirty_days = -1
+    best_interval_twenty_four = None
+    best_interval_one_hour = None
+    best_interval_six_hours = None
+    best_interval_twelve_hours = None
+    best_interval_seven_days = None
+    best_interval_thirty_days = None
 
     for hour in range(24):
         for minute in range(0, 60, 15):  # Checking every 15 minutes
             interval_time = (datetime.min + timedelta(hours=hour, minutes=minute)).time()
-            correlation = calculate_correlation(df, interval_time)
-            if correlation is not None and correlation > best_correlation:
-                best_correlation = correlation
-                best_interval = interval_time
+            correlation_twenty_four = calculate_correlation(df, interval_time)
+            correlation_one_hour = calculate_correlation(df, interval_time, volume_change_column='volume_change_since_one_hour')
+            correlation_six_hours = calculate_correlation(df, interval_time, volume_change_column='volume_change_since_six_hours')
+            correlation_twelve_hours = calculate_correlation(df, interval_time, volume_change_column='volume_change_since_twelve_hours')
+            correlation_seven_days = calculate_correlation(df, interval_time, volume_change_column='volume_change_since_seven_days')
+            correlation_thirty_days = calculate_correlation(df, interval_time, volume_change_column='volume_change_since_thirty_days')
+            if correlation_twenty_four is not None and correlation_twenty_four > best_correlation_twenty_four:
+                best_correlation_twenty_four = correlation_twenty_four
+                best_interval_twenty_four = interval_time
+            if correlation_one_hour is not None and correlation_one_hour > best_correlation_one_hour:
+                best_correlation_one_hour = correlation_one_hour
+                best_interval_one_hour = interval_time
+            if correlation_six_hours is not None and correlation_six_hours > best_correlation_six_hours:
+                best_correlation_six_hours = correlation_six_hours
+                best_interval_six_hours = interval_time
+            if correlation_twelve_hours is not None and correlation_twelve_hours > best_correlation_twelve_hours:
+                best_correlation_twelve_hours = correlation_twelve_hours
+                best_interval_twelve_hours = interval_time
+            if correlation_seven_days is not None and correlation_seven_days > best_correlation_seven_days:
+                best_correlation_seven_days = correlation_seven_days
+                best_interval_seven_days = interval_time
+            if correlation_thirty_days is not None and correlation_thirty_days > best_correlation_thirty_days:
+                best_correlation_thirty_days = correlation_thirty_days
+                best_interval_thirty_days = interval_time
 
-    return best_interval, best_correlation
+    return best_interval_twenty_four, best_correlation_twenty_four, best_interval_one_hour, best_correlation_one_hour, best_interval_six_hours, best_correlation_six_hours, best_interval_twelve_hours, best_correlation_twelve_hours, best_interval_seven_days, best_correlation_seven_days, best_interval_thirty_days, best_correlation_thirty_days
 
 def calculate_indicators(indicators, product_id, start_date, end_date, granularity):
     start_date = datetime.strptime(start_date, "%Y-%m-%d")
@@ -961,8 +1000,13 @@ def main():
         start_date = datetime.strptime(args.start_date, "%Y-%m-%d")
         end_date = datetime.strptime(args.end_date, "%Y-%m-%d")
 
-        best_interval, best_correlation = find_best_correlation(db_name, product_id, start_date, end_date)
-        print(f"Best interval: {best_interval}, Correlation: {best_correlation}")
+        best_interval_twenty_four, best_correlation_twenty_four, best_interval_one_hour, best_correlation_one_hour, best_interval_six_hours, best_correlation_six_hours, best_interval_twelve_hours, best_correlation_twelve_hours, best_interval_seven_days, best_correlation_seven_days, best_interval_thirty_days, best_correlation_thirty_days = find_best_correlation(db_name, product_id, start_date, end_date)
+        print(f"24 hour Best interval: {best_interval_twenty_four}, Correlation: {best_correlation_twenty_four}")
+        print(f"1 hour Best interval: {best_interval_one_hour}, Correlation: {best_correlation_one_hour}")
+        print(f"6 hours Best interval: {best_interval_six_hours}, Correlation: {best_correlation_six_hours}")
+        print(f"12 hours Best interval: {best_interval_twelve_hours}, Correlation: {best_correlation_twelve_hours}")
+        print(f"7 days Best interval: {best_interval_seven_days}, Correlation: {best_correlation_seven_days}")
+        print(f"30 days Best interval: {best_interval_thirty_days}, Correlation: {best_correlation_thirty_days}")
 
     if args.discover_abc_pattern:
         result = discover_abc_pattern_with_volume_fibonacci(args.product_id)
