@@ -672,14 +672,14 @@ def get_volume_changes_for_interval_from_db(db_name, product_id, start_date, end
     interval_data = df[df['interval_time'] == interval_time]
     for index, row in interval_data.iterrows():
         row_time = row['start']  # Assuming 'start' is the column with the datetime information
-        interval_data.at[index, 'volume_change_since_twenty_four_hours'] = get_volume_change_last_hours_from_db('crypto_data.db', product_id, row_time)
-        # interval_data.at[index, 'volume_change_since_one_hour'] = get_volume_change_last_hours_from_db('crypto_data.db', product_id, row_time, hours=1)
-        # interval_data.at[index, 'volume_change_since_six_hours'] = get_volume_change_last_hours_from_db('crypto_data.db', product_id, row_time, hours=6)
-        # interval_data.at[index, 'volume_change_since_twelve_hours'] = get_volume_change_last_hours_from_db('crypto_data.db', product_id, row_time, hours=12)
-        # interval_data.at[index, 'volume_change_since_seven_days'] = get_volume_change_last_hours_from_db('crypto_data.db', product_id, row_time, hours=7*24)
-        # interval_data.at[index, 'volume_change_since_thirty_days'] = get_volume_change_last_hours_from_db('crypto_data.db', product_id, row_time, hours=30*24)
+        interval_data.loc[index, '24'] = get_volume_change_last_hours_from_db('crypto_data.db', product_id, row_time)
+        interval_data.loc[index, '1'] = get_volume_change_last_hours_from_db('crypto_data.db', product_id, row_time, hours=1)
+        interval_data.loc[index, '6'] = get_volume_change_last_hours_from_db('crypto_data.db', product_id, row_time, hours=6)
+        interval_data.loc[index, '12'] = get_volume_change_last_hours_from_db('crypto_data.db', product_id, row_time, hours=12)
+        interval_data.loc[index, '7'] = get_volume_change_last_hours_from_db('crypto_data.db', product_id, row_time, hours=7*24)
+        interval_data.loc[index, '30'] = get_volume_change_last_hours_from_db('crypto_data.db', product_id, row_time, hours=30*24)
     interval_data.dropna(inplace=True)  # Drop NaN values that result from indicator calculations
-    volume_changes = interval_data[['start', 'volume_change_since_twenty_four_hours', 'price_change']]
+    volume_changes = interval_data[['start', '24', '1', '6', '12', '7', '30', 'price_change']]
     return volume_changes
 
 
@@ -990,7 +990,9 @@ def main():
         start_date = datetime.strptime(args.start_date, "%Y-%m-%d")
         end_date = datetime.strptime(args.end_date, "%Y-%m-%d")
         volume_changes = get_volume_changes_for_interval_from_db("crypto_data.db", args.product_id, start_date, end_date, interval_time)
-        print(volume_changes)
+        print(volume_changes.to_string())
+        # with pd.option_context('display.max_rows', None, 'display.max_columns', None):  # more options can be specified also
+            # print(volume_changes)
 
     if args.find_best_correlation:
         db_name = "crypto_data.db"
