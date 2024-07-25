@@ -67,3 +67,10 @@ options:
 python main.py --product_id=SOL-USD --start_date=2024-01-01 --end_date=2024-07-31 --granularity FIFTEEN_MINUTE --importdb
 python main.py --product_id=SOL-USD --find-best-correlation --start_date=2024-07-01 --end_date=2024-07-31
 ```
+
+# Notes
+- SQLite for storing data so we don't have to worry about rate limits
+- Coinbase rest client for fetching data
+- TA-Lib for technical analysis
+- Pandas for data manipulation
+
