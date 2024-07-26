@@ -779,6 +779,66 @@ def calculate_indicators(indicators, product_id, start_date, end_date, granulari
         except Exception as e:
             print(f"Error calculating {indicator}: {e}")
 
+def backtest_strategy(product_id, start_date, end_date, interval, volume_threshold=0.05, price_threshold=0.005):
+    conn = sqlite3.connect('crypto_data.db')
+    cursor = conn.cursor()
+
+    start_timestamp = int(start_date.timestamp())
+    end_timestamp = int(end_date.timestamp())
+
+    query = '''
+        SELECT start, low, high, open, close, volume FROM candles
+        WHERE start >= ? AND start <= ?
+        ORDER BY start ASC
+    '''
+    cursor.execute(query, (start_timestamp, end_timestamp))
+    data = cursor.fetchall()
+    conn.close()
+
+    df = pd.DataFrame(data, columns=['start', 'low', 'high', 'open', 'close', 'volume'])
+    df['start'] = pd.to_datetime(df['start'], unit='s')
+    df['price_change'] = df['close'].diff()
+    df['volume_change'] = df['volume'].pct_change()
+
+    # Filter data for the specified interval time
+    df['interval_time'] = df['start'].dt.time
+    interval_data = df[df['interval_time'] == interval]
+
+    # Backtest logic
+    positions = []
+    for index, row in interval_data.iterrows():
+        if row['volume_change'] > volume_threshold and row['price_change'] > price_threshold:
+            entry_price = row['close']
+            stop_loss = entry_price * 0.98
+            take_profit = entry_price * 1.03
+            positions.append({
+                'entry_time': row['start'],
+                'entry_price': entry_price,
+                'stop_loss': stop_loss,
+                'take_profit': take_profit
+            })
+
+    # Evaluate positions
+    results = []
+    for position in positions:
+        entry_time = position['entry_time']
+        entry_price = position['entry_price']
+        stop_loss = position['stop_loss']
+        take_profit = position['take_profit']
+
+        future_data = df[df['start'] > entry_time]
+        for _, future_row in future_data.iterrows():
+            if future_row['low'] <= stop_loss:
+                results.append({'entry_time': entry_time, 'exit_time': future_row['start'], 'exit_price': stop_loss, 'result': 'stop_loss'})
+                break
+            elif future_row['high'] >= take_profit:
+                results.append({'entry_time': entry_time, 'exit_time': future_row['start'], 'exit_price': take_profit, 'result': 'take_profit'})
+                break
+        else:
+            results.append({'entry_time': entry_time, 'exit_time': future_data.iloc[-1]['start'], 'exit_price': future_data.iloc[-1]['close'], 'result': 'hold'})
+
+    return results
+
 def main():
     parser = argparse.ArgumentParser(description='Crypto analysis tool.')
     parser.add_argument('--product_id', type=str, help='Product ID for the crypto asset')
@@ -810,6 +870,7 @@ def main():
     parser.add_argument('--volatility-indicators', action='store_true', help='Calculate Volatility Indicators')
     parser.add_argument('--pattern-recognition', action='store_true', help='Calculate Pattern Recognition indicators')
     parser.add_argument('--statistic-functions', action='store_true', help='Calculate Statistic Functions')
+    parser.add_argument('--backtest', action='store_true', help='Backtest the strategy with the given interval')
 
     args = parser.parse_args()
 
@@ -1017,6 +1078,19 @@ def main():
             print(f"ABC Pattern found: A={A_point}, B={B_point}, C={C_point}, Fibonacci Retracement={fib_retracement}")
         else:
             print("No ABC pattern found.")
+
+    if args.backtest:
+        start_date = datetime.strptime(args.start_date, "%Y-%m-%d")
+        end_date = datetime.strptime(args.end_date, "%Y-%m-%d")
+        try:
+            interval_time = datetime.strptime(args.interval_time, "%H:%M:%S").time()
+        except ValueError:
+            print("Invalid time format for interval_time. Please use HH:MM:SS format.")
+            return
+        results = backtest_strategy(args.product_id, start_date, end_date, interval_time)
+        for result in results:
+            print(result)
+        return
 
 if __name__ == "__main__":
     main()
