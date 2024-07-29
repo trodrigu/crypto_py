@@ -649,7 +649,7 @@ def get_volume_changes_for_interval_from_db(db_name, product_id, start_date, end
     end_timestamp = int(end_date.timestamp())
 
     query = '''
-    SELECT start, open, close, volume FROM candles
+    SELECT start, open, close, volume, high, low FROM candles
     WHERE start >= ? AND start <= ?
     ORDER BY start ASC
     '''
@@ -662,11 +662,13 @@ def get_volume_changes_for_interval_from_db(db_name, product_id, start_date, end
         return pd.DataFrame(columns=['start', 'volume_change'])
 
     # Convert data to DataFrame
-    df = pd.DataFrame(data, columns=['start', 'open', 'close', 'volume'])
+    df = pd.DataFrame(data, columns=['start', 'open', 'close', 'volume', 'high', 'low'])
     df['start'] = pd.to_datetime(df['start'], unit='s')
     df['volume_change'] = df['volume'].diff()
     df['price_change'] = df['close'] - df['open']
     df['interval_time'] = df['start'].dt.time
+    df['RSI'] = talib.RSI(df['close'], timeperiod=14)
+    df['MACD'], df['MACD_signal'], df['MACD_hist'] = talib.MACD(df['close'], fastperiod=12, slowperiod=26, signalperiod=9)
 
     # Filter data for the specified interval time
     interval_data = df[df['interval_time'] == interval_time]
@@ -679,7 +681,7 @@ def get_volume_changes_for_interval_from_db(db_name, product_id, start_date, end
         interval_data.loc[index, '7'] = get_volume_change_last_hours_from_db('crypto_data.db', product_id, row_time, hours=7*24)
         interval_data.loc[index, '30'] = get_volume_change_last_hours_from_db('crypto_data.db', product_id, row_time, hours=30*24)
     interval_data.dropna(inplace=True)  # Drop NaN values that result from indicator calculations
-    volume_changes = interval_data[['start', '24', '1', '6', '12', '7', '30', 'price_change']]
+    volume_changes = interval_data[['start', '24', '1', '6', '12', '7', '30', 'price_change', 'close', 'high', 'low', 'open', 'volume', 'RSI', 'MACD', 'MACD_signal', 'MACD_hist']]
     return volume_changes
 
 
@@ -773,50 +775,37 @@ def calculate_indicators(indicators, product_id, start_date, end_date, granulari
                 result = getattr(talib, indicator)(df['open'], df['high'], df['low'], df['close'])
                 result = result[result != 0]
                 if not result.empty:
+                    print(df.iloc[result.index].to_string())
                     print(f"{indicator}: {result}")
             else:
                 result = getattr(talib, indicator)(df['close'])
         except Exception as e:
             print(f"Error calculating {indicator}: {e}")
 
-def backtest_strategy(product_id, start_date, end_date, interval, volume_threshold=0.05, price_threshold=0.005):
-    conn = sqlite3.connect('crypto_data.db')
-    cursor = conn.cursor()
-
-    start_timestamp = int(start_date.timestamp())
-    end_timestamp = int(end_date.timestamp())
-
-    query = '''
-        SELECT start, low, high, open, close, volume FROM candles
-        WHERE start >= ? AND start <= ?
-        ORDER BY start ASC
-    '''
-    cursor.execute(query, (start_timestamp, end_timestamp))
-    data = cursor.fetchall()
-    conn.close()
-
-    df = pd.DataFrame(data, columns=['start', 'low', 'high', 'open', 'close', 'volume'])
-    df['start'] = pd.to_datetime(df['start'], unit='s')
-    df['price_change'] = df['close'].diff()
-    df['volume_change'] = df['volume'].pct_change()
-
-    # Filter data for the specified interval time
-    df['interval_time'] = df['start'].dt.time
-    interval_data = df[df['interval_time'] == interval]
-
+def backtest_strategy(product_id, start_date, end_date, interval, volume_changes, future_data, volume_threshold=0.05, price_threshold=0.005):
     # Backtest logic
     positions = []
-    for index, row in interval_data.iterrows():
-        if row['volume_change'] > volume_threshold and row['price_change'] > price_threshold:
-            entry_price = row['close']
+    print(f"Volume Threshold: {volume_threshold}, Price Threshold: {price_threshold}")
+    for index, row in volume_changes.iterrows():
+        # print(f"6: {row['6']}, 12: {row['12']}")
+        # if row['6'] > volume_threshold and row['12'] > volume_threshold:
+        # if row['6'] > row['12'] and row['1'] > row['6'] and ((row['6'] > 0 or row['12'] > 0) and row['1'] > 0):
+        # if row['6'] > row['12'] and row['1'] > row['6'] and row['12'] > row['24']:
+        if row['6'] < row['12'] and row['1'] < row['6'] and row['12'] < row['24']:
+            print(row.to_string())
+            entry_price = row['open']
             stop_loss = entry_price * 0.98
             take_profit = entry_price * 1.03
             positions.append({
                 'entry_time': row['start'],
+                'exit_time': row['close'],
                 'entry_price': entry_price,
                 'stop_loss': stop_loss,
-                'take_profit': take_profit
+                'take_profit': take_profit,
+                'close': row['close']
             })
+
+    print(f"Number of positions: {len(positions)}")
 
     # Evaluate positions
     results = []
@@ -826,18 +815,40 @@ def backtest_strategy(product_id, start_date, end_date, interval, volume_thresho
         stop_loss = position['stop_loss']
         take_profit = position['take_profit']
 
-        future_data = df[df['start'] > entry_time]
-        for _, future_row in future_data.iterrows():
-            if future_row['low'] <= stop_loss:
-                results.append({'entry_time': entry_time, 'exit_time': future_row['start'], 'exit_price': stop_loss, 'result': 'stop_loss'})
-                break
-            elif future_row['high'] >= take_profit:
-                results.append({'entry_time': entry_time, 'exit_time': future_row['start'], 'exit_price': take_profit, 'result': 'take_profit'})
-                break
-        else:
-            results.append({'entry_time': entry_time, 'exit_time': future_data.iloc[-1]['start'], 'exit_price': future_data.iloc[-1]['close'], 'result': 'hold'})
+        # future_data = pd.DataFrame(future_data, columns=['start', 'low', 'high', 'open', 'close', 'volume'])
+        # future_data['start'] = pd.to_datetime(future_data['start'], unit='s')
+        # future_data['volume_change'] = future_data['volume'].diff()
+        # future_data['price_change'] = future_data['close'] - future_data['open']
+        # future_data['interval_time'] = future_data['start'].dt.time
+        # future_data = future_data[future_data['start'] > entry_time]
+        # for _, future_row in future_data.iterrows():
+        # print(f"close: {position['close']}, take_profit: {take_profit}, stop_loss: {stop_loss}")
+        if position['close'] >= take_profit:
+            results.append({'entry_time': entry_time, 'exit_time': position['exit_time'], 'exit_price': take_profit, 'result': 'take_profit'})
+        elif position['close'] <= stop_loss:
+            results.append({'entry_time': entry_time, 'exit_time': position['exit_time'], 'exit_price': stop_loss, 'result': 'stop_loss'})
+        # else:
+            # results.append({'entry_time': entry_time, 'exit_time': future_data.iloc[-1]['start'], 'exit_price': future_data.iloc[-1]['close'], 'result': 'hold'})
 
     return results
+
+def find_optimal_thresholds(product_id, start_date, end_date, interval, volume_changes, future_data):
+    # print(volume_changes.to_string())
+    volume_threshold = 1
+    volume_threshold_step = 0.001
+    price_threshold = 0.2
+    price_threshold_step = 0.0001
+    max_iterations = 10000
+
+    for _ in range(max_iterations):
+        results = backtest_strategy(product_id, start_date, end_date, interval, volume_changes, future_data, volume_threshold, price_threshold)
+        if all(result['result'] == 'take_profit' for result in results):
+            print(f"Volume Threshold: {volume_threshold}, Price Threshold: {price_threshold}")
+            return volume_threshold, price_threshold, results
+        volume_threshold += volume_threshold_step
+        # price_threshold += price_threshold_step
+
+    return None, None, []
 
 def main():
     parser = argparse.ArgumentParser(description='Crypto analysis tool.')
@@ -871,6 +882,7 @@ def main():
     parser.add_argument('--pattern-recognition', action='store_true', help='Calculate Pattern Recognition indicators')
     parser.add_argument('--statistic-functions', action='store_true', help='Calculate Statistic Functions')
     parser.add_argument('--backtest', action='store_true', help='Backtest the strategy with the given interval')
+    parser.add_argument('--optimize', action='store_true', help='Optimize thresholds to ensure only take_profit results')
 
     args = parser.parse_args()
 
@@ -1052,8 +1064,6 @@ def main():
         end_date = datetime.strptime(args.end_date, "%Y-%m-%d")
         volume_changes = get_volume_changes_for_interval_from_db("crypto_data.db", args.product_id, start_date, end_date, interval_time)
         print(volume_changes.to_string())
-        # with pd.option_context('display.max_rows', None, 'display.max_columns', None):  # more options can be specified also
-            # print(volume_changes)
 
     if args.find_best_correlation:
         db_name = "crypto_data.db"
@@ -1087,9 +1097,27 @@ def main():
         except ValueError:
             print("Invalid time format for interval_time. Please use HH:MM:SS format.")
             return
-        results = backtest_strategy(args.product_id, start_date, end_date, interval_time)
+        volume_changes = get_volume_changes_for_interval_from_db("crypto_data.db", args.product_id, start_date, end_date, interval_time)
+
+        future_data = get_candle_data_filtered_by_date("crypto_data.db", args.product_id, start_date, end_date)
+        results = backtest_strategy(args.product_id, start_date, end_date, interval_time, volume_changes, future_data, volume_threshold=0.01, price_threshold=0.005)
         for result in results:
             print(result)
+        return
+
+    if args.optimize:
+        start_date = datetime.strptime(args.start_date, "%Y-%m-%d")
+        end_date = datetime.strptime(args.end_date, "%Y-%m-%d")
+        interval = datetime.strptime(args.interval_time, "%H:%M:%S").time()
+        volume_changes = get_volume_changes_for_interval_from_db("crypto_data.db", args.product_id, start_date, end_date, interval)
+        future_data = get_candle_data_filtered_by_date("crypto_data.db", args.product_id, start_date, end_date)
+        volume_threshold, price_threshold, results = find_optimal_thresholds(args.product_id, start_date, end_date, interval, volume_changes, future_data)
+        if results:
+            print(f"Optimal Volume Threshold: {volume_threshold}, Optimal Price Threshold: {price_threshold}")
+            for result in results:
+                print(result)
+        else:
+            print("Could not find optimal thresholds within the given iterations.")
         return
 
 if __name__ == "__main__":
