@@ -1,3 +1,4 @@
+import os
 from coinbase.rest import RESTClient
 from datetime import datetime, timedelta
 import numpy as np
@@ -8,6 +9,10 @@ import requests
 import argparse
 import talib
 import sqlite3
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+
 
 # Initialize the client with your Coinbase API credentials
 client = RESTClient()
@@ -23,7 +28,7 @@ STATISTIC_FUNCTIONS = ['BETA', 'CORREL', 'LINEARREG', 'LINEARREG_ANGLE', 'LINEAR
 def fetch_data(api_client, product_id, start, end, granularity="FIFTEEN_MINUTE"):
     while True:
         try:
-            print(f"Fetching data for {product_id} from {start} to {end} with granularity {granularity}")
+            # print(f"Fetching data for {product_id} from {start} to {end} with granularity {granularity}")
             response = api_client.get_candles(
                 product_id=product_id,
                 start=start,
@@ -782,6 +787,46 @@ def calculate_indicators(indicators, product_id, start_date, end_date, granulari
         except Exception as e:
             print(f"Error calculating {indicator}: {e}")
 
+
+def detect_hammer_pattern_and_send_email(product_id):
+    end_time = datetime.now()
+    start_time = end_time - timedelta(hours=24)
+    data = fetch_data(client, product_id, int(start_time.timestamp()), int(end_time.timestamp()), "FIFTEEN_MINUTE")
+    
+    df = pd.DataFrame(data, columns=["start", "low", "high", "open", "close", "volume"])
+    df['start'] = pd.to_datetime(df['start'].astype(int), unit='s')
+    # print(df.to_string())
+    
+    hammer = talib.CDLHAMMER(df['open'], df['high'], df['low'], df['close'])
+    if hammer.iloc[-1] != 0:
+        print(f"Hammer pattern detected for {product_id} at {df['start'].iloc[-1]}")
+        send_email(f"Hammer pattern detected for {product_id} at {df['start'].iloc[-1]}", f"Hammer pattern detected for {product_id} at {df['start'].iloc[-1]}", os.getenv("EMAIL_USER"))
+    # else:
+    #     print(f"No hammer pattern detected for {product_id} at {df['start'].iloc[-1]}")
+    #     send_email(f"No hammer pattern detected for {product_id} at {df['start'].iloc[-1]}", f"No hammer pattern detected for {product_id} at {df['start'].iloc[-1]}", os.getenv("EMAIL_USER"))
+
+def send_email(subject, body, to_email):
+    from_email = os.getenv("EMAIL_USER")
+    from_password = os.getenv("EMAIL_PASS")
+
+    msg = MIMEMultipart()
+    msg['From'] = from_email
+    msg['To'] = to_email
+    msg['Subject'] = subject
+
+    msg.attach(MIMEText(body, 'plain'))
+
+    try:
+        server = smtplib.SMTP('smtp.gmail.com', 587)  # Replace with your SMTP server and port
+        server.starttls()
+        server.login(from_email, from_password)
+        text = msg.as_string()
+        server.sendmail(from_email, to_email, text)
+        server.quit()
+        print("Email sent successfully")
+    except Exception as e:
+        print(f"Failed to send email: {e}")
+
 def backtest_strategy(product_id, start_date, end_date, interval, volume_changes, future_data, volume_threshold=0.05, price_threshold=0.005):
     # Backtest logic
     positions = []
@@ -883,6 +928,7 @@ def main():
     parser.add_argument('--statistic-functions', action='store_true', help='Calculate Statistic Functions')
     parser.add_argument('--backtest', action='store_true', help='Backtest the strategy with the given interval')
     parser.add_argument('--optimize', action='store_true', help='Optimize thresholds to ensure only take_profit results')
+    parser.add_argument('--detect-hammer', action='store_true', help='Detect real time hammer pattern and sends email.')
 
     args = parser.parse_args()
 
@@ -1119,6 +1165,9 @@ def main():
         else:
             print("Could not find optimal thresholds within the given iterations.")
         return
+
+    if args.detect_hammer:
+        detect_hammer_pattern_and_send_email(args.product_id)
 
 if __name__ == "__main__":
     main()
