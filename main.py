@@ -794,27 +794,27 @@ def detect_hammer_pattern_and_send_email(product_id):
     data = fetch_data(client, product_id, int(start_time.timestamp()), int(end_time.timestamp()), "FIFTEEN_MINUTE")
     
     df = pd.DataFrame(data, columns=["start", "low", "high", "open", "close", "volume"])
-    df['start'] = df['start'].astype(int)
+    df['start'] = pd.to_datetime(df['start'].astype(int), unit='s')
     df['low'] = df['low'].astype(float)
     df['high'] = df['high'].astype(float)
     df['open'] = df['open'].astype(float)
     df['close'] = df['close'].astype(float)
     df['volume'] = df['volume'].astype(float)
-    # print(df.to_string())
+    start = df['start'].iloc[-1].timestamp()
     
     hammer = talib.CDLHAMMER(df['open'], df['high'], df['low'], df['close'])
     if hammer.iloc[-1] != 0:
-        if get_position_from_db(df['start'].iloc[-1]).empty:
+        if get_position_from_db(start).empty:
             df['RSI'] = talib.RSI(df['close'], timeperiod=14)
             df['MACD'], df['MACD_signal'], df['MACD_hist'] = talib.MACD(df['close'], fastperiod=12, slowperiod=26, signalperiod=9)
             print(f"Hammer pattern detected for {product_id} at {df['start'].iloc[-1]} with RSI: {df['RSI'].iloc[-1]} and MACD: {df['MACD'].iloc[-1]} MACD_signal: {df['MACD_signal'].iloc[-1]} MACD_hist: {df['MACD_hist'].iloc[-1]}")
             print(f"df['close']: {df['close'].iloc[-1]}")
             stop_loss = df['close'].iloc[-1] * 0.98
             take_profit = df['close'].iloc[-1] * 1.03
-            write_position_to_db({'entry_time': df['start'].iloc[-1], 'exit_time': df['start'].iloc[-1], 'entry_price': df['close'].iloc[-1], 'stop_loss': stop_loss, 'take_profit': take_profit, 'rsi': df['RSI'].iloc[-1], 'macd': df['MACD'].iloc[-1], 'macd_signal': df['MACD_signal'].iloc[-1], 'macd_hist': df['MACD_hist'].iloc[-1]})
-            send_email(f"Hammer pattern detected for {product_id} at {df['start'].iloc[-1]}", f"Hammer pattern detected for {product_id} at {df['start'].iloc[-1]} with RSI: {df['RSI'].iloc[-1]} and MACD: {df['MACD'].iloc[-1]} MACD_signal: {df['MACD_signal'].iloc[-1]} MACD_hist: {df['MACD_hist'].iloc[-1]}", os.getenv("EMAIL_USER"))
+            write_position_to_db({'entry_time': start, 'exit_time': df['start'].iloc[-1], 'entry_price': df['close'].iloc[-1], 'stop_loss': stop_loss, 'take_profit': take_profit, 'rsi': df['RSI'].iloc[-1], 'macd': df['MACD'].iloc[-1], 'macd_signal': df['MACD_signal'].iloc[-1], 'macd_hist': df['MACD_hist'].iloc[-1]})
+            send_email(f"Hammer pattern detected for {product_id} at {start}", f"Hammer pattern detected for {product_id} at {df['start'].iloc[-1]} with RSI: {df['RSI'].iloc[-1]} and MACD: {df['MACD'].iloc[-1]} MACD_signal: {df['MACD_signal'].iloc[-1]} MACD_hist: {df['MACD_hist'].iloc[-1]}", os.getenv("EMAIL_USER"))
     # else:
-    #     print(f"No hammer pattern detected for {product_id} at {df['start'].iloc[-1]}")
+        # print(f"No hammer pattern detected for {product_id} at {start}")
     #     send_email(f"No hammer pattern detected for {product_id} at {df['start'].iloc[-1]}", f"No hammer pattern detected for {product_id} at {df['start'].iloc[-1]}", os.getenv("EMAIL_USER"))
 
 def get_position_from_db(entry_time, db_name="crypto_data.db"):
@@ -823,8 +823,8 @@ def get_position_from_db(entry_time, db_name="crypto_data.db"):
     
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS positions (
-            entry_time INTEGER,
-            exit_time INTEGER,
+            entry_time REAL,
+            exit_time REAL,
             entry_price REAL,
             stop_loss REAL,
             take_profit REAL,
