@@ -901,10 +901,8 @@ def send_email(subject, body, to_email):
 
 def backtest_hammer_strategy(product_id, start_date, end_date, hammer, future_data):
     positions = []
-    print(hammer.to_string())
     hammer = hammer[hammer != 0]
     for index, row in hammer.items():
-        print(f"index: {index}")
         data_row = future_data.iloc[index]
         entry_price = data_row['close']
         stop_loss = entry_price * 0.98
@@ -920,32 +918,19 @@ def backtest_hammer_strategy(product_id, start_date, end_date, hammer, future_da
             })
 
     results = []
-    print(future_data.to_string())
     for position in positions:
         entry_time = position['entry_time']
         entry_price = position['entry_price']
         stop_loss = position['stop_loss']
         take_profit = position['take_profit']
-        print(f"entry_time: {entry_time}, entry_price: {entry_price}, stop_loss: {stop_loss}, take_profit: {take_profit}")
         data_row_index = position['data_row_index']
-        print(f"index: {data_row_index}")
         current_candle = future_data.iloc[data_row_index]
-        print(f"current_candle: {current_candle.to_string()}")
 
         candle_after = future_data.iloc[data_row_index + 1]
-        print(f"candle_after: {candle_after.to_string()}")
         second_candle_after = future_data.iloc[data_row_index + 2]
-        print(f"second_candle_after: {second_candle_after.to_string()}")
         third_candle_after = future_data.iloc[data_row_index + 3]
-        print(f"third_candle_after: {third_candle_after.to_string()}")
-
-
-
         fourth_candle_after = future_data.iloc[data_row_index + 4]
-        print(f"fourth_candle_after: {fourth_candle_after.to_string()}")
-
         fifth_candle_after = future_data.iloc[data_row_index + 5]
-        print(f"fifth_candle_after: {fifth_candle_after.to_string()}")
 
         if fourth_candle_after['close'] >= take_profit:
             results.append({'entry_time': entry_time, 'entry_price': entry_price, 'exit_time': position['exit_time'], 'exit_price': take_profit, 'actual_exit_price': fourth_candle_after['close'], 'result': 'take_profit'})
