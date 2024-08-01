@@ -510,13 +510,20 @@ def import_data_to_sqlite(data, db_name="crypto_data.db"):
             volume REAL
         )
     ''')
+
+    # add constraint where start is unique
+    cursor.execute('''
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_start ON candles (start)
+    ''')
     
     # Convert list of dictionaries to list of tuples
     data_tuples = [(d['start'], d['low'], d['high'], d['open'], d['close'], d['volume']) for d in data]
     
+    # on conflict do nothing
     cursor.executemany('''
         INSERT INTO candles (start, low, high, open, close, volume)
         VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(start) DO NOTHING
     ''', data_tuples)
     
     conn.commit()
@@ -892,6 +899,61 @@ def send_email(subject, body, to_email):
     except Exception as e:
         print(f"Failed to send email: {e}")
 
+def backtest_hammer_strategy(product_id, start_date, end_date, hammer, future_data):
+    positions = []
+    print(hammer.to_string())
+    hammer = hammer[hammer != 0]
+    for index, row in hammer.items():
+        print(f"index: {index}")
+        data_row = future_data.iloc[index]
+        entry_price = data_row['close']
+        stop_loss = entry_price * 0.98
+        take_profit = entry_price * 1.01
+        if data_row['MACD'] > data_row['MACD_signal'] and data_row['MACD'] > 0:
+            positions.append({
+                'entry_time': data_row['start'],
+                'exit_time': data_row['close'],
+                'entry_price': entry_price,
+                'stop_loss': stop_loss,
+                'take_profit': take_profit,
+                'data_row_index': index
+            })
+
+    results = []
+    print(future_data.to_string())
+    for position in positions:
+        entry_time = position['entry_time']
+        entry_price = position['entry_price']
+        stop_loss = position['stop_loss']
+        take_profit = position['take_profit']
+        print(f"entry_time: {entry_time}, entry_price: {entry_price}, stop_loss: {stop_loss}, take_profit: {take_profit}")
+        data_row_index = position['data_row_index']
+        print(f"index: {data_row_index}")
+        current_candle = future_data.iloc[data_row_index]
+        print(f"current_candle: {current_candle.to_string()}")
+
+        candle_after = future_data.iloc[data_row_index + 1]
+        print(f"candle_after: {candle_after.to_string()}")
+        second_candle_after = future_data.iloc[data_row_index + 2]
+        print(f"second_candle_after: {second_candle_after.to_string()}")
+        third_candle_after = future_data.iloc[data_row_index + 3]
+        print(f"third_candle_after: {third_candle_after.to_string()}")
+
+
+
+        fourth_candle_after = future_data.iloc[data_row_index + 4]
+        print(f"fourth_candle_after: {fourth_candle_after.to_string()}")
+
+        fifth_candle_after = future_data.iloc[data_row_index + 5]
+        print(f"fifth_candle_after: {fifth_candle_after.to_string()}")
+
+        if fourth_candle_after['close'] >= take_profit:
+            results.append({'entry_time': entry_time, 'entry_price': entry_price, 'exit_time': position['exit_time'], 'exit_price': take_profit, 'actual_exit_price': fourth_candle_after['close'], 'result': 'take_profit'})
+        elif fourth_candle_after['close'] <= stop_loss:
+            results.append({'entry_time': entry_time, 'entry_price': entry_price, 'exit_time': position['exit_time'], 'exit_price': stop_loss, 'actual_exit_price': fourth_candle_after['close'], 'result': 'stop_loss'})
+
+    return results
+
 def backtest_strategy(product_id, start_date, end_date, interval, volume_changes, future_data, volume_threshold=0.05, price_threshold=0.005):
     # Backtest logic
     positions = []
@@ -993,6 +1055,7 @@ def main():
     parser.add_argument('--backtest', action='store_true', help='Backtest the strategy with the given interval')
     parser.add_argument('--optimize', action='store_true', help='Optimize thresholds to ensure only take_profit results')
     parser.add_argument('--detect-hammer', action='store_true', help='Detect real time hammer pattern and sends email.')
+    parser.add_argument('--backtest-hammer', action='store_true', help='Detect real time hammer pattern and sends email.')
 
     args = parser.parse_args()
 
@@ -1211,6 +1274,28 @@ def main():
 
         future_data = get_candle_data_filtered_by_date("crypto_data.db", args.product_id, start_date, end_date)
         results = backtest_strategy(args.product_id, start_date, end_date, interval_time, volume_changes, future_data, volume_threshold=0.01, price_threshold=0.005)
+        for result in results:
+            print(result)
+        return
+
+    if args.backtest_hammer:
+        start_date = datetime.strptime(args.start_date, "%Y-%m-%d")
+        end_date = datetime.strptime(args.end_date, "%Y-%m-%d")
+
+        future_data = get_candle_data_filtered_by_date("crypto_data.db", args.product_id, start_date, end_date)
+        fdf = pd.DataFrame(future_data, columns=["start", "low", "high", "open", "close", "volume"])
+        fdf['start'] = pd.to_datetime(fdf['start'].astype(int), unit='s')
+        fdf['low'] = fdf['low'].astype(float)
+        fdf['high'] = fdf['high'].astype(float)
+        fdf['open'] = fdf['open'].astype(float)
+        fdf['close'] = fdf['close'].astype(float)
+        fdf['volume'] = fdf['volume'].astype(float)
+        fdf['RSI'] = talib.RSI(fdf['close'], timeperiod=14)
+        fdf['MACD'], fdf['MACD_signal'], fdf['MACD_hist'] = talib.MACD(fdf['close'], fastperiod=12, slowperiod=26, signalperiod=9)
+
+        hammer = talib.CDLHAMMER(fdf['open'], fdf['high'], fdf['low'], fdf['close'])
+
+        results = backtest_hammer_strategy(args.product_id, start_date, end_date, hammer, fdf)
         for result in results:
             print(result)
         return
