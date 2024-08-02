@@ -12,6 +12,7 @@ import sqlite3
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+import re
 
 
 # Initialize the client with your Coinbase API credentials
@@ -907,7 +908,7 @@ def backtest_hammer_strategy(product_id, start_date, end_date, hammer, future_da
         entry_price = data_row['close']
         stop_loss = entry_price * 0.98
         take_profit = entry_price * 1.01
-        if data_row['MACD'] > data_row['MACD_signal'] and data_row['MACD'] > 0:
+        if data_row['MACD'] > data_row['MACD_signal'] and data_row['MACD'] > 0 and data_row['RSI'] > 50:
             positions.append({
                 'entry_time': data_row['start'],
                 'exit_time': data_row['close'],
@@ -988,6 +989,175 @@ def backtest_strategy(product_id, start_date, end_date, interval, volume_changes
 
     return results
 
+def import_products(client):
+    products = client.get_products()
+    # create products table if it doesn't exist
+    conn = sqlite3.connect("crypto_data.db")
+    cursor = conn.cursor()
+    # given the following json schema
+    # {'product_id': 'CGLD-BTC', 'price': '0.00000795', 'price_percentage_change_24h': '-0.87281795511222', 'volume_24h': '1579.88', 'volume_percentage_change_24h': '-11.72819157554797', 'base_increment': '0.01', 'quote_increment': '0.00000001', 'quote_min_size': '0.000016', 'quote_max_size': '200', 'base_min_size': '0.01', 'base_max_size': '16242700', 'base_name': 'Celo', 'quote_name': 'Bitcoin', 'watched': False, 'is_disabled': False, 'new': False, 'status': 'online', 'cancel_only': False, 'limit_only': False, 'post_only': False, 'trading_disabled': False, 'auction_mode': False, 'product_type': 'SPOT', 'quote_currency_id': 'BTC', 'base_currency_id': 'CGLD', 'fcm_trading_session_details': None, 'mid_market_price': '', 'alias': '', 'alias_to': [], 'base_display_symbol': 'CGLD', 'quote_display_symbol': 'BTC', 'view_only': False, 'price_increment': '0.00000001', 'display_name': 'CGLD-BTC', 'product_venue': 'CBE', 'approximate_quote_24h_volume': '0.01256005'}
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS products (
+            product_id TEXT PRIMARY KEY,
+            price REAL,
+            price_percentage_change_24h REAL,
+            volume_24h REAL,
+            volume_percentage_change_24h REAL,
+            base_increment REAL,
+            quote_increment REAL,
+            quote_min_size REAL,
+            quote_max_size REAL,
+            base_min_size REAL,
+            base_max_size REAL,
+            base_name TEXT,
+            quote_name TEXT,
+            watched BOOLEAN,
+            is_disabled BOOLEAN,
+            new BOOLEAN,
+            status TEXT,
+            cancel_only BOOLEAN,
+            limit_only BOOLEAN,
+            post_only BOOLEAN,
+            trading_disabled BOOLEAN,
+            auction_mode BOOLEAN,
+            product_type TEXT,
+            quote_currency_id TEXT,
+            base_currency_id TEXT,
+            fcm_trading_session_details TEXT,
+            mid_market_price TEXT,
+            alias TEXT,
+            alias_to TEXT,
+            base_display_symbol TEXT,
+            quote_display_symbol TEXT,
+            view_only BOOLEAN,
+            price_increment REAL,
+            display_name TEXT,
+            product_venue TEXT,
+            approximate_quote_24h_volume REAL
+        )
+    ''')
+    conn.commit()
+
+    # insert products into the table
+    for product in products['products']:
+        # if alias_to is empty [] then set it to None
+        alias_to = None if not product['alias_to'] else product['alias_to'][0]
+        cursor.execute('''
+            INSERT INTO products (
+                product_id,
+                price,
+                price_percentage_change_24h,
+                volume_24h,
+                volume_percentage_change_24h,
+                base_increment,
+                quote_increment,
+                quote_min_size,
+                quote_max_size,
+                base_min_size,
+                base_max_size,
+                base_name,
+                quote_name,
+                watched,
+                is_disabled,
+                new,
+                status,
+                cancel_only,
+                limit_only,
+                post_only,
+                trading_disabled,
+                auction_mode,
+                product_type,
+                quote_currency_id,
+                base_currency_id,
+                fcm_trading_session_details,
+                mid_market_price,
+                alias,
+                alias_to,
+                base_display_symbol,
+                quote_display_symbol,
+                view_only,
+                price_increment,
+                display_name,
+                product_venue,
+                approximate_quote_24h_volume
+            )
+            VALUES (?,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?)
+        ''', (product['product_id'],
+              product['price'],
+              product['price_percentage_change_24h'],
+              product['volume_24h'],
+              product['volume_percentage_change_24h'],
+              product['base_increment'],
+              product['quote_increment'],
+              product['quote_min_size'],
+              product['quote_max_size'],
+              product['base_min_size'],
+              product['base_max_size'],
+              product['base_name'],
+              product['quote_name'],
+              product['watched'],
+              product['is_disabled'],
+              product['new'],
+              product['status'],
+              product['cancel_only'],
+              product['limit_only'],
+              product['post_only'],
+              product['trading_disabled'],
+              product['auction_mode'],
+              product['product_type'],
+              product['quote_currency_id'],
+              product['base_currency_id'],
+              product['fcm_trading_session_details'],
+              product['mid_market_price'],
+              product['alias'],
+              alias_to,
+              product['base_display_symbol'],
+              product['quote_display_symbol'],
+              product['view_only'],
+              product['price_increment'],
+              product['display_name'],
+              product['product_venue'],
+              product['approximate_quote_24h_volume']))
+    conn.commit()
+    conn.close()
+
+    return products
+
 def find_optimal_thresholds(product_id, start_date, end_date, interval, volume_changes, future_data):
     # print(volume_changes.to_string())
     volume_threshold = 1
@@ -1042,6 +1212,9 @@ def main():
     parser.add_argument('--detect-hammer', action='store_true', help='Detect real time hammer pattern and sends email.')
     parser.add_argument('--backtest-hammer', action='store_true', help='Detect real time hammer pattern and sends email.')
     parser.add_argument('--input', type=int, help='Input for the backtest strategy')
+    parser.add_argument('--import-products', action='store_true', help='Get all products available on the exchange')
+    parser.add_argument('--parse-backtest-hammer', action='store_true', help='Parse backtest results for hammer pattern')
+    parser.add_argument('--filename', type=str, help='Backtest results filename for hammer pattern')
 
     args = parser.parse_args()
 
@@ -1318,6 +1491,31 @@ def main():
     if args.detect_hammer:
         detect_hammer_pattern_and_send_email(args.product_id)
 
+    if args.import_products:
+        products = import_products(client)
+        # get product ids
+        product_ids = [product['product_id'] for product in products['products']]
+        print(product_ids)
+
+    if args.parse_backtest_hammer:
+        product_id_pattern = re.compile(r"Product ID: (.+)")
+        net_profit_pattern = re.compile(r"Net Profit: ([-\d\.]+)")
+        file = open(args.filename, "r").read()
+        product_ids = product_id_pattern.findall(file)
+        net_profits = net_profit_pattern.findall(file)
+
+        # Combine product IDs and net profits into a list of tuples
+        result = list(zip(product_ids, net_profits))
+
+        # Print the results
+        for product_id, net_profit in result:
+            print(f"Product ID: {product_id}, Net Profit: {net_profit}")
+
+        # Convert net profits to float and calculate the total
+        total_profit = sum(map(float, net_profits))
+
+        # Print the total net profit
+        print(f"Total Net Profit: {total_profit}")
 if __name__ == "__main__":
     main()
 
