@@ -1041,6 +1041,7 @@ def main():
     parser.add_argument('--optimize', action='store_true', help='Optimize thresholds to ensure only take_profit results')
     parser.add_argument('--detect-hammer', action='store_true', help='Detect real time hammer pattern and sends email.')
     parser.add_argument('--backtest-hammer', action='store_true', help='Detect real time hammer pattern and sends email.')
+    parser.add_argument('--input', type=int, help='Input for the backtest strategy')
 
     args = parser.parse_args()
 
@@ -1280,9 +1281,23 @@ def main():
 
         hammer = talib.CDLHAMMER(fdf['open'], fdf['high'], fdf['low'], fdf['close'])
 
+        # Print out product ID
+        print(f"Product ID: {args.product_id}")
         results = backtest_hammer_strategy(args.product_id, start_date, end_date, hammer, fdf)
         for result in results:
             print(result)
+
+        # given an input calculate net profit
+        profit = 0
+        for result in results:
+            if result['result'] == 'take_profit':
+                perc_change = (result['exit_price'] - result['entry_price']) / result['entry_price']
+                profit += (perc_change * args.input)
+            elif result['result'] == 'stop_loss':
+                perc_change = (result['exit_price'] - result['entry_price']) / result['entry_price']
+                profit += (perc_change * args.input)
+
+        print(f"Net Profit: {profit}")
         return
 
     if args.optimize:
