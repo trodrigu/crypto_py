@@ -497,7 +497,7 @@ def calculate_indicators_for_base(df, product_id):
     df.dropna(inplace=True)  # Drop NaN values that result from indicator calculations
     return df
 
-def import_data_to_sqlite(data, db_name="crypto_data.db"):
+def import_data_to_sqlite(data, product_id, db_name="crypto_data.db"):
     conn = sqlite3.connect(db_name)
     cursor = conn.cursor()
     
@@ -508,22 +508,23 @@ def import_data_to_sqlite(data, db_name="crypto_data.db"):
             high REAL,
             open REAL,
             close REAL,
-            volume REAL
+            volume REAL,
+            product_id TEXT
         )
     ''')
 
     # add constraint where start is unique
     cursor.execute('''
-        CREATE UNIQUE INDEX IF NOT EXISTS idx_start ON candles (start)
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_start ON candles (start, product_id)
     ''')
     
     # Convert list of dictionaries to list of tuples
-    data_tuples = [(d['start'], d['low'], d['high'], d['open'], d['close'], d['volume']) for d in data]
+    data_tuples = [(d['start'], d['low'], d['high'], d['open'], d['close'], d['volume'], product_id) for d in data]
     
     # on conflict do nothing
     cursor.executemany('''
-        INSERT INTO candles (start, low, high, open, close, volume)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO candles (start, low, high, open, close, volume, product_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(start) DO NOTHING
     ''', data_tuples)
     
@@ -554,10 +555,10 @@ def get_price_change_last_24_hours_from_db(db_name, product_id, interval_time):
 
     query = '''
         SELECT open, close FROM candles
-        WHERE start >= ? AND start <= ?
+        WHERE start >= ? AND start <= ? AND product_id = ?
         ORDER BY start ASC
     '''
-    cursor.execute(query, (start_time_unix, end_time_unix))
+    cursor.execute(query, (start_time_unix, end_time_unix, product_id))
     data = cursor.fetchall()
     conn.close()
     if data:
@@ -591,10 +592,10 @@ def get_volume_change_last_hours_from_db(db_name, product_id, interval_time, hou
 
     query = '''
         SELECT volume FROM candles
-        WHERE start >= ? AND start <= ?
+        WHERE start >= ? AND start <= ? AND product_id = ?
         ORDER BY start ASC
     '''
-    cursor.execute(query, (start_time_unix, end_time_unix))
+    cursor.execute(query, (start_time_unix, end_time_unix, product_id))
     data = cursor.fetchall()
     conn.close()
 
@@ -614,10 +615,10 @@ def get_candle_data_filtered_by_date(db_name, product_id, start_date, end_date):
 
     query = '''
         SELECT start, low, high, open, close, volume FROM candles
-        WHERE start >= ? AND start <= ?
+        WHERE start >= ? AND start <= ? AND product_id = ?
         ORDER BY start ASC
     '''
-    cursor.execute(query, (start_timestamp, end_timestamp))
+    cursor.execute(query, (start_timestamp, end_timestamp, product_id))
     data = cursor.fetchall()
     conn.close()
 
@@ -632,10 +633,10 @@ def get_price_changes_for_interval_from_db(db_name, product_id, start_date, end_
 
     query = '''
         SELECT start, open, close FROM candles
-        WHERE start >= ? AND start <= ?
+        WHERE start >= ? AND start <= ? AND product_id = ?
         ORDER BY start ASC
     '''
-    cursor.execute(query, (start_timestamp, end_timestamp))
+    cursor.execute(query, (start_timestamp, end_timestamp, product_id))
     data = cursor.fetchall()
     conn.close()
 
@@ -663,11 +664,11 @@ def get_volume_changes_for_interval_from_db(db_name, product_id, start_date, end
 
     query = '''
     SELECT start, open, close, volume, high, low FROM candles
-    WHERE start >= ? AND start <= ?
+    WHERE start >= ? AND start <= ? AND product_id = ?
     ORDER BY start ASC
     '''
 
-    cursor.execute(query, (start_timestamp, end_timestamp))
+    cursor.execute(query, (start_timestamp, end_timestamp, product_id))
     data = cursor.fetchall()
     conn.close()
 
@@ -819,7 +820,7 @@ def detect_hammer_pattern_and_send_email(product_id):
             print(f"df['close']: {df['close'].iloc[-1]}")
             stop_loss = df['close'].iloc[-1] * 0.98
             take_profit = df['close'].iloc[-1] * 1.03
-            write_position_to_db({'entry_time': start, 'exit_time': df['start'].iloc[-1], 'entry_price': df['close'].iloc[-1], 'stop_loss': stop_loss, 'take_profit': take_profit, 'rsi': df['RSI'].iloc[-1], 'macd': df['MACD'].iloc[-1], 'macd_signal': df['MACD_signal'].iloc[-1], 'macd_hist': df['MACD_hist'].iloc[-1]})
+            write_position_to_db({'entry_time': start, 'exit_time': nil, 'entry_price': df['close'].iloc[-1], 'exit_price': take_profit, 'stop_loss': stop_loss, 'take_profit': take_profit, 'rsi': df['RSI'].iloc[-1], 'macd': df['MACD'].iloc[-1], 'macd_signal': df['MACD_signal'].iloc[-1], 'macd_hist': df['MACD_hist'].iloc[-1], 'product_id': product_id, 'actual_exit_price': nil})
             send_email(f"Hammer pattern detected for {product_id} at {start}", f"Hammer pattern detected for {product_id} at {df['start'].iloc[-1]} with RSI: {df['RSI'].iloc[-1]} and MACD: {df['MACD'].iloc[-1]} MACD_signal: {df['MACD_signal'].iloc[-1]} MACD_hist: {df['MACD_hist'].iloc[-1]}", os.getenv("EMAIL_USER"))
     # else:
         # print(f"No hammer pattern detected for {product_id} at {start}")
@@ -831,15 +832,18 @@ def get_position_from_db(entry_time, db_name="crypto_data.db"):
     
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS positions (
-            entry_time REAL,
-            exit_time REAL,
+            entry_time INTEGER,
+            exit_time INTEGER,
             entry_price REAL,
+            exit_price REAL,
             stop_loss REAL,
             take_profit REAL,
             rsi REAL,
             macd REAL,
             macd_signal REAL,
-            macd_hist REAL
+            macd_hist REAL,
+            product_id TEXT,
+            actual_exit_price REAL
         )
     ''')
     
@@ -852,7 +856,7 @@ def get_position_from_db(entry_time, db_name="crypto_data.db"):
     else:
         return pd.DataFrame(columns=['entry_time', 'exit_time', 'entry_price', 'stop_loss', 'take_profit', 'rsi', 'macd', 'macd_signal', 'macd_hist'])
 
-def write_position_to_db(position, db_name="crypto_data.db"):
+def write_position_to_db(position, product_id, db_name="crypto_data.db"):
     conn = sqlite3.connect(db_name)
     cursor = conn.cursor()
     
@@ -861,19 +865,22 @@ def write_position_to_db(position, db_name="crypto_data.db"):
             entry_time INTEGER,
             exit_time INTEGER,
             entry_price REAL,
+            exit_price REAL,
             stop_loss REAL,
             take_profit REAL,
             rsi REAL,
             macd REAL,
             macd_signal REAL,
-            macd_hist REAL
+            macd_hist REAL,
+            actual_exit_price REAL
+            product_id TEXT
         )
     ''')
     
     cursor.execute('''
-        INSERT INTO positions (entry_time, exit_time, entry_price, stop_loss, take_profit, rsi, macd, macd_signal, macd_hist)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ''', (position['entry_time'], position['exit_time'], position['entry_price'], position['stop_loss'], position['take_profit'], position['rsi'], position['macd'], position['macd_signal'], position['macd_hist']))
+        INSERT INTO positions (entry_time, exit_time, entry_price, exit_price, stop_loss, take_profit, rsi, macd, macd_signal, macd_hist, actual_exit_price, product_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ''', (position['entry_time'], position['exit_time'], position['entry_price'], position['exit_price'], position['stop_loss'], position['take_profit'], position['rsi'], position['macd'], position['macd_signal'], position['macd_hist'], position['actual_exit_price'], product_id))
     
     conn.commit()
     conn.close()
@@ -908,15 +915,20 @@ def backtest_hammer_strategy(product_id, start_date, end_date, hammer, future_da
         entry_price = data_row['close']
         stop_loss = entry_price * 0.98
         take_profit = entry_price * 1.01
-        if data_row['MACD'] > data_row['MACD_signal'] and data_row['MACD'] > 0 and data_row['RSI'] > 50:
-            positions.append({
-                'entry_time': data_row['start'],
-                'exit_time': data_row['close'],
-                'entry_price': entry_price,
-                'stop_loss': stop_loss,
-                'take_profit': take_profit,
-                'data_row_index': index
-            })
+        if data_row['MACD'] > data_row['MACD_signal'] and data_row['MACD'] > 0 and data_row['MACD_signal'] > 0 and data_row['RSI'] > 50:
+            # print(f"Hammer pattern detected for {product_id} at {data_row['start']} with RSI: {data_row['RSI']} and MACD: {data_row['MACD']} MACD_signal: {data_row['MACD_signal']} MACD_hist: {data_row['MACD_hist']}")
+            # append only if there isn't an existing position
+            start = data_row['start'].timestamp()
+            if get_position_from_db(start).empty:
+                # insert into positions table
+                positions.append({
+                    'entry_time': start,
+                    'entry_price': entry_price,
+                    'stop_loss': stop_loss,
+                    'take_profit': take_profit,
+                    'data_row_index': index,
+                    'product_id': product_id
+                })
 
     results = []
     for position in positions:
@@ -934,9 +946,12 @@ def backtest_hammer_strategy(product_id, start_date, end_date, hammer, future_da
         fifth_candle_after = future_data.iloc[data_row_index + 5]
 
         if fourth_candle_after['close'] >= take_profit:
-            results.append({'entry_time': entry_time, 'entry_price': entry_price, 'exit_time': position['exit_time'], 'exit_price': take_profit, 'actual_exit_price': fourth_candle_after['close'], 'result': 'take_profit'})
+            results.append({'entry_time': entry_time, 'entry_price': entry_price, 'exit_price': take_profit, 'actual_exit_price': fourth_candle_after['close'], 'result': 'take_profit'})
+            write_position_to_db({'entry_time': entry_time, 'exit_time': fourth_candle_after['start'].timestamp(), 'entry_price': entry_price, 'exit_price': take_profit, 'stop_loss': stop_loss, 'take_profit': take_profit, 'rsi': current_candle['RSI'], 'macd': current_candle['MACD'], 'macd_signal': current_candle['MACD_signal'], 'macd_hist': current_candle['MACD_hist'], 'actual_exit_price': fourth_candle_after['close']}, product_id)
         elif fourth_candle_after['close'] <= stop_loss:
-            results.append({'entry_time': entry_time, 'entry_price': entry_price, 'exit_time': position['exit_time'], 'exit_price': stop_loss, 'actual_exit_price': fourth_candle_after['close'], 'result': 'stop_loss'})
+            results.append({'entry_time': entry_time, 'entry_price': entry_price, 'exit_price': stop_loss, 'actual_exit_price': fourth_candle_after['close'], 'result': 'stop_loss'})
+            write_position_to_db({'entry_time': entry_time, 'exit_time': fourth_candle_after['start'].timestamp(), 'entry_price': entry_price, 'exit_price': take_profit, 'stop_loss': stop_loss, 'take_profit': take_profit, 'rsi': current_candle['RSI'], 'macd': current_candle['MACD'], 'macd_signal': current_candle['MACD_signal'], 'macd_hist': current_candle['MACD_hist'], 'actual_exit_price': fourth_candle_after['close']}, product_id)
+                
 
     return results
 
@@ -1235,7 +1250,7 @@ def main():
             current_date = next_date
             time.sleep(0.2)  # Sleep for 200ms to ensure we stay within 5 requests per second
         
-        import_data_to_sqlite(all_data)
+        import_data_to_sqlite(all_data, args.product_id)
         print(f"Data imported into SQLite database successfully.")
         return
 
