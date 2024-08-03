@@ -15,10 +15,13 @@ product_ids=$(echo $product_ids | tr ' ' '\n' | grep -v -E 'USD$|USDC$|USDT$')
 # next parse the output of the above command to get the product ids
 # and then run the following commands to backtest the hammer pattern
 # for each product id
-for product_id in $product_ids; do
-    /usr/local/bin/python3 main.py --product_id=$product_id --start_date=2024-07-01 --end_date=2024-08-01 --granularity FIFTEEN_MINUTE --importdb
-    /usr/local/bin/python3 main.py --product_id $product_id --backtest-hammer --start_date 2024-07-01 --end_date 2024-08-01 --input 3000
-done
+# parallelize the backtesting by running the commands in the background
+# and then wait for all the commands to finish
+#for product_id in $product_ids; do
+    #/usr/local/bin/python3 main.py --product_id=$product_id --start_date=2024-07-01 --end_date=2024-08-01 --granularity FIFTEEN_MINUTE --importdb
+    #/usr/local/bin/python3 main.py --product_id $product_id --backtest-hammer --start_date 2024-07-01 --end_date 2024-08-01 --input 3000
+#done
+parallel -j 0 /usr/local/bin/python3 main.py --product_id={} --start_date=2024-07-01 --end_date=2024-08-01 --granularity FIFTEEN_MINUTE --importdb ::: $product_ids
 
 
 #/usr/local/bin/python3 main.py --product_id=SOL-USD --start_date=2024-07-01 --end_date=2024-08-01 --granularity FIFTEEN_MINUTE --importdb

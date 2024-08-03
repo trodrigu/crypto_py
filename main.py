@@ -525,7 +525,7 @@ def import_data_to_sqlite(data, product_id, db_name="crypto_data.db"):
     cursor.executemany('''
         INSERT INTO candles (start, low, high, open, close, volume, product_id)
         VALUES (?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(start) DO NOTHING
+        ON CONFLICT(start, product_id) DO NOTHING
     ''', data_tuples)
     
     conn.commit()
@@ -945,13 +945,42 @@ def backtest_hammer_strategy(product_id, start_date, end_date, hammer, future_da
         fourth_candle_after = future_data.iloc[data_row_index + 4]
         fifth_candle_after = future_data.iloc[data_row_index + 5]
 
-        if fourth_candle_after['close'] >= take_profit:
+        # I want to reduce a boolean on candle_after, second_candle_after, third_candle_after, fourth_candle_after, fifth_candle_after
+        if candle_after['close'] >= take_profit:
+            results.append({'entry_time': entry_time, 'entry_price': entry_price, 'exit_price': take_profit, 'actual_exit_price': candle_after['close'], 'result': 'take_profit'})
+            write_position_to_db({'entry_time': entry_time, 'exit_time': candle_after['start'].timestamp(), 'entry_price': entry_price, 'exit_price': take_profit, 'stop_loss': stop_loss, 'take_profit': take_profit, 'rsi': current_candle['RSI'], 'macd': current_candle['MACD'], 'macd_signal': current_candle['MACD_signal'], 'macd_hist': current_candle['MACD_hist'], 'actual_exit_price': candle_after['close']}, product_id)
+        elif candle_after['close'] <= stop_loss:
+            results.append({'entry_time': entry_time, 'entry_price': entry_price, 'exit_price': stop_loss, 'actual_exit_price': candle_after['close'], 'result': 'stop_loss'})
+            write_position_to_db({'entry_time': entry_time, 'exit_time': candle_after['start'].timestamp(), 'entry_price': entry_price, 'exit_price': take_profit, 'stop_loss': stop_loss, 'take_profit': take_profit, 'rsi': current_candle['RSI'], 'macd': current_candle['MACD'], 'macd_signal': current_candle['MACD_signal'], 'macd_hist': current_candle['MACD_hist'], 'actual_exit_price': candle_after['close']}, product_id)
+        elif second_candle_after['close'] >= take_profit:
+            results.append({'entry_time': entry_time, 'entry_price': entry_price, 'exit_price': take_profit, 'actual_exit_price': second_candle_after['close'], 'result': 'take_profit'})
+            write_position_to_db({'entry_time': entry_time, 'exit_time': second_candle_after['start'].timestamp(), 'entry_price': entry_price, 'exit_price': take_profit, 'stop_loss': stop_loss, 'take_profit': take_profit, 'rsi': current_candle['RSI'], 'macd': current_candle['MACD'], 'macd_signal': current_candle['MACD_signal'], 'macd_hist': current_candle['MACD_hist'], 'actual_exit_price': second_candle_after['close']}, product_id)
+        elif second_candle_after['close'] <= stop_loss:
+            results.append({'entry_time': entry_time, 'entry_price': entry_price, 'exit_price': stop_loss, 'actual_exit_price': second_candle_after['close'], 'result': 'stop_loss'})
+            write_position_to_db({'entry_time': entry_time, 'exit_time': second_candle_after['start'].timestamp(), 'entry_price': entry_price, 'exit_price': take_profit, 'stop_loss': stop_loss, 'take_profit': take_profit, 'rsi': current_candle['RSI'], 'macd': current_candle['MACD'], 'macd_signal': current_candle['MACD_signal'], 'macd_hist': current_candle['MACD_hist'], 'actual_exit_price': second_candle_after['close']}, product_id)
+        elif third_candle_after['close'] >= take_profit:
+            results.append({'entry_time': entry_time, 'entry_price': entry_price, 'exit_price': take_profit, 'actual_exit_price': third_candle_after['close'], 'result': 'take_profit'})
+            write_position_to_db({'entry_time': entry_time, 'exit_time': third_candle_after['start'].timestamp(), 'entry_price': entry_price, 'exit_price': take_profit, 'stop_loss': stop_loss, 'take_profit': take_profit, 'rsi': current_candle['RSI'], 'macd': current_candle['MACD'], 'macd_signal': current_candle['MACD_signal'], 'macd_hist': current_candle['MACD_hist'], 'actual_exit_price': third_candle_after['close']}, product_id)
+        elif third_candle_after['close'] <= stop_loss:
+            results.append({'entry_time': entry_time, 'entry_price': entry_price, 'exit_price': stop_loss, 'actual_exit_price': third_candle_after['close'], 'result': 'stop_loss'})
+            write_position_to_db({'entry_time': entry_time, 'exit_time': third_candle_after['start'].timestamp(), 'entry_price': entry_price, 'exit_price': take_profit, 'stop_loss': stop_loss, 'take_profit': take_profit, 'rsi': current_candle['RSI'], 'macd': current_candle['MACD'], 'macd_signal': current_candle['MACD_signal'], 'macd_hist': current_candle['MACD_hist'], 'actual_exit_price': third_candle_after['close']}, product_id)
+        elif fourth_candle_after['close'] >= take_profit:
             results.append({'entry_time': entry_time, 'entry_price': entry_price, 'exit_price': take_profit, 'actual_exit_price': fourth_candle_after['close'], 'result': 'take_profit'})
             write_position_to_db({'entry_time': entry_time, 'exit_time': fourth_candle_after['start'].timestamp(), 'entry_price': entry_price, 'exit_price': take_profit, 'stop_loss': stop_loss, 'take_profit': take_profit, 'rsi': current_candle['RSI'], 'macd': current_candle['MACD'], 'macd_signal': current_candle['MACD_signal'], 'macd_hist': current_candle['MACD_hist'], 'actual_exit_price': fourth_candle_after['close']}, product_id)
         elif fourth_candle_after['close'] <= stop_loss:
             results.append({'entry_time': entry_time, 'entry_price': entry_price, 'exit_price': stop_loss, 'actual_exit_price': fourth_candle_after['close'], 'result': 'stop_loss'})
             write_position_to_db({'entry_time': entry_time, 'exit_time': fourth_candle_after['start'].timestamp(), 'entry_price': entry_price, 'exit_price': take_profit, 'stop_loss': stop_loss, 'take_profit': take_profit, 'rsi': current_candle['RSI'], 'macd': current_candle['MACD'], 'macd_signal': current_candle['MACD_signal'], 'macd_hist': current_candle['MACD_hist'], 'actual_exit_price': fourth_candle_after['close']}, product_id)
-                
+        elif fifth_candle_after['close'] >= take_profit:
+            results.append({'entry_time': entry_time, 'entry_price': entry_price, 'exit_price': take_profit, 'actual_exit_price': fifth_candle_after['close'], 'result': 'take_profit'})
+            write_position_to_db({'entry_time': entry_time, 'exit_time': fifth_candle_after['start'].timestamp(), 'entry_price': entry_price, 'exit_price': take_profit, 'stop_loss': stop_loss, 'take_profit': take_profit, 'rsi': current_candle['RSI'], 'macd': current_candle['MACD'], 'macd_signal': current_candle['MACD_signal'], 'macd_hist': current_candle['MACD_hist'], 'actual_exit_price': fifth_candle_after['close']}, product_id)
+        elif fifth_candle_after['close'] <= stop_loss:
+            results.append({'entry_time': entry_time, 'entry_price': entry_price, 'exit_price': stop_loss, 'actual_exit_price': fifth_candle_after['close'], 'result': 'stop_loss'})
+            write_position_to_db({'entry_time': entry_time, 'exit_time': fifth_candle_after['start'].timestamp(), 'entry_price': entry_price, 'exit_price': take_profit, 'stop_loss': stop_loss, 'take_profit': take_profit, 'rsi': current_candle['RSI'], 'macd': current_candle['MACD'], 'macd_signal': current_candle['MACD_signal'], 'macd_hist': current_candle['MACD_hist'], 'actual_exit_price': fifth_candle_after['close']}, product_id)
+         # else just hold?
+        else:
+            write_position_to_db({'entry_time': entry_time, 'exit_time': fifth_candle_after['start'].timestamp(), 'entry_price': entry_price, 'exit_price': take_profit, 'stop_loss': stop_loss, 'take_profit': take_profit, 'rsi': current_candle['RSI'], 'macd': current_candle['MACD'], 'macd_signal': current_candle['MACD_signal'], 'macd_hist': current_candle['MACD_hist'], 'actual_exit_price': fifth_candle_after['close']}, product_id)
+            results.append({'entry_time': entry_time, 'entry_price': entry_price, 'exit_price': fifth_candle_after['close'], 'result': 'hold'})
+
 
     return results
 
