@@ -500,7 +500,7 @@ def calculate_indicators_for_base(df, product_id):
 def import_data_to_sqlite(data, product_id, db_name="crypto_data.db"):
     conn = sqlite3.connect(db_name)
     cursor = conn.cursor()
-    
+
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS candles (
             start INTEGER,
@@ -517,6 +517,19 @@ def import_data_to_sqlite(data, product_id, db_name="crypto_data.db"):
     cursor.execute('''
         CREATE UNIQUE INDEX IF NOT EXISTS idx_start ON candles (start, product_id)
     ''')
+
+    # check if there already exists a candle for the end time for a product
+    check_query = '''
+    SELECT * from candles where start = ? and product_id = ?
+    '''
+    cursor.execute(check_query, (data[-1]['start'], product_id))
+
+    end_date_candle = cursor.fetchone()
+    
+    if end_date_candle is not None:
+        print(f"Candle for {product_id} at {data[-1]['start']} already exists in the database.")
+        return
+    
     
     # Convert list of dictionaries to list of tuples
     data_tuples = [(d['start'], d['low'], d['high'], d['open'], d['close'], d['volume'], product_id) for d in data]
@@ -852,9 +865,9 @@ def get_position_from_db(entry_time, db_name="crypto_data.db"):
     conn.close()
     
     if position:
-        return pd.DataFrame([position], columns=['entry_time', 'exit_time', 'entry_price', 'stop_loss', 'take_profit', 'rsi', 'macd', 'macd_signal', 'macd_hist'])
+        return pd.DataFrame([position], columns=['entry_time', 'exit_time', 'entry_price', 'exit_price', 'stop_loss', 'take_profit', 'rsi', 'macd', 'macd_signal', 'macd_hist', 'product_id', 'actual_exit_price'])
     else:
-        return pd.DataFrame(columns=['entry_time', 'exit_time', 'entry_price', 'stop_loss', 'take_profit', 'rsi', 'macd', 'macd_signal', 'macd_hist'])
+        return pd.DataFrame(columns=['entry_time', 'exit_time', 'entry_price', 'exit_price', 'stop_loss', 'take_profit', 'rsi', 'macd', 'macd_signal', 'macd_hist', 'product_id', 'actual_exit_price'])
 
 def write_position_to_db(position, product_id, db_name="crypto_data.db"):
     conn = sqlite3.connect(db_name)
@@ -1080,12 +1093,20 @@ def import_products(client):
             approximate_quote_24h_volume REAL
         )
     ''')
+
+    # add constraint on product_id
+    cursor.execute('''
+        CREATE UNIQUE INDEX IF NOT EXISTS product_id_index
+        ON products (product_id)
+    ''')
+
     conn.commit()
 
     # insert products into the table
     for product in products['products']:
         # if alias_to is empty [] then set it to None
         alias_to = None if not product['alias_to'] else product['alias_to'][0]
+        # on conflict do nothing
         cursor.execute('''
             INSERT INTO products (
                 product_id,
@@ -1161,6 +1182,7 @@ def import_products(client):
                     ?,
                     ?,
                     ?)
+        ON CONFLICT(product_id) DO NOTHING
         ''', (product['product_id'],
               product['price'],
               product['price_percentage_change_24h'],
@@ -1536,10 +1558,7 @@ def main():
         detect_hammer_pattern_and_send_email(args.product_id)
 
     if args.import_products:
-        products = import_products(client)
-        # get product ids
-        product_ids = [product['product_id'] for product in products['products']]
-        print(product_ids)
+        import_products(client)
 
     if args.parse_backtest_hammer:
         product_id_pattern = re.compile(r"Product ID: (.+)")
